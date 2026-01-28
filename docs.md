@@ -59,7 +59,9 @@ npx tsc --init
     "rootDir": "src",
     "strict": true,
     "esModuleInterop": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "allowImportingTsExtensions":true,
+    "noEmit": true
   }
 }
 ```
@@ -106,7 +108,7 @@ app.listen(PORT, () => {
 
 - The `/health` endpoint is mandatory for infra and monitoring
 
-- Run the command 
+- Run the command
 
 ```bash
 npm run dev
@@ -148,7 +150,7 @@ volumes:
   auth_pgdata
 ```
   
-- Run the command 
+- Run the command
 
 ```bash
 cd docker
@@ -156,7 +158,7 @@ cd docker
 docker compose up -d
 ```
 
-- Add the following to the env file 
+- Add the following to the env file
 
 ```env
 DB_HOST=localhost
@@ -197,4 +199,142 @@ app.get("/db-test", async (_req, res) => {
 });
 ```
 
-<!-- Check the error after starting the server -->
+## STEP - 9 - Set up Authentication Database Schema (PostgreSQL)
+
+- Go to DBeaver and open the sql script for the `auth_db` database and start writing queries
+
+- Enable `UUID` support
+
+```sql
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+```
+
+- Why
+  -> UUIDs are safer than incremental IDs
+  -> Better for distributed systems
+  -> Avoids user enumeration
+
+- Create the `users` table
+
+```sql
+CREATE TABLE users (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+- Why
+  -> `email UNIQUE` -> login identity
+  -> `password_hash` -> never store passwords
+  -> `is_active` -> soft-disable users
+  -> `created_at` -> auditing
+
+- Create the `roles` table
+
+```sql
+CREATE TABLE roles (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE
+);
+```
+
+- Why
+  -> Roles change rarely
+  -> `SERIAL` is fine here (internal use only)
+  -> Separate tables enable RBAC scaling
+
+- Create `Seed` roles
+
+```sql
+INSERT INTO roles (name)
+VALUES
+  ('user'),
+  ('admin'),
+  ('super-admin');
+```
+
+- Why
+  -> Fixed roles
+  -> Enforced by DB itself, not code enums
+
+- `user_roles` (many-to-many)
+
+```sql
+CREATE TABLE user_roles (
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role_id INT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+```  
+
+- Why
+  -> Users can have multiple roles
+  -> `ON DELETE CASCADE` keeps data clean
+  -> Composite PK prevents duplicates
+
+- Indexes (important, minimal)
+
+```sql
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_user_roles_user_id ON user_roles(user_id);
+```
+
+- Why
+  -> Login is email based
+  -> Role lookup happens on every request.
+
+## STEP - 10 - Type-safe DB Access layer (Users)
+
+- Create DB types, so create the file `backend/src/types/user.ts`
+
+```ts
+export interface User {
+  id: string;
+  email: string;
+  password_hash: string;
+  is_active: boolean;
+  created_at: Date;
+}
+```
+
+- Why
+  -> Central source of truth
+  -> Prevents "any"-driven bug
+  -> Mirrors DB exactly (important)
+
+- Create users repository, create the file `backend/src/repositories/user.repository.ts`
+
+```ts
+import { pool } from "../db.ts";
+import { User } from "../types/user.ts";
+
+export const userRepository = {
+  async findByEmail(email: string): Promise<User | null> {
+    const result = await pool.query<User>(
+      `SELECT * FROM users WHERE email = $1`,
+      [email]
+    );
+
+    return result.rows[0] ?? null;
+  },
+
+  async create(email: string, passwordHash: string): Promise<User> {
+    const result = await pool.query<User>(
+      `
+      INSERT INTO users (email, password_hash)
+      VALUES ($1, $2)
+      RETURNING *
+      `,
+      [email, passwordHash]
+    );
+
+    return result.rows[0];
+  }
+};
+```
+
+- Why
+  -> Parameterized queries - SQL injection safe
+  -> Repository pattern - business logic stays clean
+  -> No framework dependencies
