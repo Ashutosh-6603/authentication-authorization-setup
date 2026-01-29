@@ -488,3 +488,153 @@ npm install -D @types/jsonwebtoken
   -> Stateless auth
   -> Scales Horizontally
   -> Industry standard for APIs
+
+- Create the JWT utility
+
+- Create the file `backend/src/utils/jwt.ts`
+
+```ts
+import jwt from "jsonwebtoken";
+
+const JWT_SECRET = process.env.JWT_SECRET!;
+const JWT_EXPIRES_IN = "15m";
+
+export interface JwtPayload {
+  userId: string;
+}
+
+export function signAccessToken(payload: JwtPayload): string {
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+}
+
+export function verifyAccessToken(token: string): JwtPayload {
+  return jwt.verify(token, JWT_SECRET) as JwtPayload;
+}
+```
+
+- Why
+  -> Centralized token logic
+  -> Short expiry - safer
+  -> Typed payload
+
+- Add JWT secret to the `env` file
+
+```env
+JWT_SECRET=super_secret_jwt_key_change_later
+```
+
+- Why
+  -> Never hardcode secrets
+  -> Will rotate later
+
+- Create the login controller
+
+- Add the api to the `backend/src/controllers/auth.controller.ts`
+
+```ts
+import bcrypt from "bcrypt";
+import { signAccessToken } from "../utils/jwt.ts";
+
+export async function login(req: Request, res: Response) {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ message: "Email and password required" });
+  }
+
+  const user = await userRepository.findByEmail(email);
+  if (!user || !user.is_active) {
+    return res.status(401).json({ message: "Invalid credentials" });
+  }
+
+  const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+  if (!isPasswordValid) {
+    return res.status(401).json({ message: "Invalid credentials" });
+  }
+
+  const accessToken = signAccessToken({ userId: user.id });
+
+  res.json({ accessToken });
+}
+```
+
+- Why
+  -> Same error for wrong email/password (security)
+  -> Token contains only usedId
+  -> No rotes yet (intentional)
+
+- Add the login route
+
+```ts
+import { login } from "../controllers/auth.controller.ts";
+
+authRouter.post("/login", login);
+```
+
+- Create the Auth middleware
+
+- Create the file `backend/src/middlewares/auth.middleware.ts`
+
+```ts
+import { Request, Response, NextFunction } from "express";
+import { verifyAccessToken } from "../utils/jwt.ts";
+
+export interface AuthRequest extends Request {
+  userId?: string;
+}
+
+export function requireAuth(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const token = authHeader.split(" ")[1];
+    const payload = verifyAccessToken(token);
+    req.userId = payload.userId;
+    next();
+  } catch {
+    return res.status(401).json({ message: "Invalid token" });
+  }
+}
+```
+
+- Why
+  -> Backend-enforced auth
+  -> Token verification per request
+  -> Types request extension
+
+- Test the protected route
+
+- Add this temporary route in `index.ts`
+
+```ts
+import { requireAuth } from "./middlewares/auth.middleware.ts";
+
+app.get("/protected", requireAuth, (req, res) => {
+  res.json({ message: "You are authenticated" });
+});
+```
+
+- Login
+
+```postman
+POST /auth/login
+{
+  "email": "user1@example.com",
+  "password": "User@1"
+}
+```
+
+- Use token in the protected route
+
+```postman
+GET /protected
+Authorization: Bearer <token>
+```
