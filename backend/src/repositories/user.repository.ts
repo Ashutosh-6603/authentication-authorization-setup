@@ -1,5 +1,5 @@
 import { pool } from "../db.ts";
-import { User } from "../types/user.ts";
+import type { User } from "../types/user.ts";
 
 export const userRepository = {
   async findByEmail(email: string): Promise<User | null> {
@@ -22,5 +22,15 @@ export const userRepository = {
     );
 
     return result.rows[0];
+  },
+
+  async assignRole(userId: string, roleName: string): Promise<void> {
+    await pool.query(
+      `
+    INSERT INTO user_roles (user_id, role_id)
+    SELECT $1, id FROM roles WHERE name = $2
+    `,
+      [userId, roleName],
+    );
   },
 };

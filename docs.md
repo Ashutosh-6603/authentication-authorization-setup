@@ -173,6 +173,9 @@ DB_PASSWORD=auth_password
 - Create the file `backend/src/db.ts`
 
 ```ts
+import dotenv from "dotenv";
+dotenv.config();
+
 import { Pool } from "pg";
 
 export const pool = new Pool({
@@ -307,7 +310,7 @@ export interface User {
 
 ```ts
 import { pool } from "../db.ts";
-import { User } from "../types/user.ts";
+import type { User } from "../types/user.ts";
 
 export const userRepository = {
   async findByEmail(email: string): Promise<User | null> {
@@ -338,3 +341,150 @@ export const userRepository = {
   -> Parameterized queries - SQL injection safe
   -> Repository pattern - business logic stays clean
   -> No framework dependencies
+
+- Temporary test endpoint (sanity only)
+
+- Update 'backend/src/index.ts'
+
+```ts
+import { userRepository } from "./repositories/user.repository.ts";
+
+app.post("/test-user", async (req, res) => {
+  const { email } = req.body;
+
+  const user = await userRepository.create(
+    email,
+    "dummy_password_hash"
+  );
+
+  res.json(user);
+});
+```
+
+- Test it in Postman
+
+## STEP - 11 - User Registration and Password Hashing and Validation
+
+- Install required dependencies
+
+```bash
+npm install bcrypt
+npm install -D @types/bcrypt
+```
+
+- Why
+  -> `bcrypt` is battle-tested
+  -> Slow hashing - brute-force resistant
+
+- Create the password hashing utility, create the file `backend/src/utils/password.ts`
+
+```ts
+import bcrypt from "bcrypt";
+
+const SALT_ROUNDS = 12;
+
+export async function hashPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, SALT_ROUNDS);
+}
+```
+
+- Why
+  -> Centralized hashing logic
+  -> Easy to tune cost factor later
+
+- Extend user repository for role Assignment
+
+- Update 'backend/src/repositories/user.repository.ts'
+
+```ts
+async assignRole(userId: string, roleName: string): Promise<void> {
+  await pool.query(
+    `
+    INSERT INTO user_roles (user_id, role_id)
+    SELECT $1, id FROM roles WHERE name = $2
+    `,
+    [userId, roleName]
+  );
+}
+```
+
+- Why
+  -> DB decides role ID
+  -> No hardcoded role numbers
+  -> Safe and scalable
+
+- Create user registration endpoint
+
+- Create the file `backend/src/controllers/auth.controller.ts`
+
+```ts
+import { Request, Response } from "express";
+import { userRepository } from "../repositories/user.repository.ts";
+import { hashPassword } from "../utils/password.ts";
+
+export async function register(req: Request, res: Response) {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ message: "Email and password required" });
+  }
+
+  const existingUser = await userRepository.findByEmail(email);
+  if (existingUser) {
+    return res.status(409).json({ message: "User already exists" });
+  }
+
+  const passwordHash = await hashPassword(password);
+  const user = await userRepository.create(email, passwordHash);
+
+  await userRepository.assignRole(user.id, "user");
+
+  res.status(201).json({
+    id: user.id,
+    email: user.email,
+    created_at: user.created_at,
+  });
+}
+```
+
+- Why
+  -> Validation first
+  -> Hash before DB insert
+  -> Default role assignment is explicit
+
+- Create the auth routes file
+
+- Create the file `backend/src/routes/auth.routes.ts`
+
+```ts
+import { Router } from "express";
+import { register } from "../controllers/auth.controller.ts";
+
+export const authRouter = Router();
+
+authRouter.post("/register", register);
+```
+
+- Wire routes and remove test endpoint
+
+- Update 'backend/src/index.ts'
+
+```ts
+import { authRouter } from "./routes/auth.routes.ts";
+
+app.use("/auth", authRouter);
+```
+
+## STEP - 12 - Login and JWT Access Token (Authentication Core)
+
+- Install the jwt dependencies
+
+```bash
+npm install jsonwebtoken
+npm install -D @types/jsonwebtoken
+```
+
+- Why
+  -> Stateless auth
+  -> Scales Horizontally
+  -> Industry standard for APIs
