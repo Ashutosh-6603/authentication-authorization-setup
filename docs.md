@@ -60,7 +60,7 @@ npx tsc --init
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "allowImportingTsExtensions":true,
+    "allowImportingTsExtensions": true,
     "noEmit": true
   }
 }
@@ -146,10 +146,9 @@ services:
     volumes:
       - auth_pgdata:/var/lib/postgresql/data
 
-volumes:
-  auth_pgdata
+volumes: auth_pgdata
 ```
-  
+
 - Run the command
 
 ```bash
@@ -269,7 +268,7 @@ VALUES
 CREATE TABLE user_roles (
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   role_id INT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
-```  
+```
 
 - Why
   -> Users can have multiple roles
@@ -316,7 +315,7 @@ export const userRepository = {
   async findByEmail(email: string): Promise<User | null> {
     const result = await pool.query<User>(
       `SELECT * FROM users WHERE email = $1`,
-      [email]
+      [email],
     );
 
     return result.rows[0] ?? null;
@@ -329,11 +328,11 @@ export const userRepository = {
       VALUES ($1, $2)
       RETURNING *
       `,
-      [email, passwordHash]
+      [email, passwordHash],
     );
 
     return result.rows[0];
-  }
+  },
 };
 ```
 
@@ -352,10 +351,7 @@ import { userRepository } from "./repositories/user.repository.ts";
 app.post("/test-user", async (req, res) => {
   const { email } = req.body;
 
-  const user = await userRepository.create(
-    email,
-    "dummy_password_hash"
-  );
+  const user = await userRepository.create(email, "dummy_password_hash");
 
   res.json(user);
 });
@@ -563,7 +559,7 @@ export async function login(req: Request, res: Response) {
   -> Token contains only usedId
   -> No rotes yet (intentional)
 
-- Add the login route
+- Add the login route to the `auth.routes.ts` file
 
 ```ts
 import { login } from "../controllers/auth.controller.ts";
@@ -586,7 +582,7 @@ export interface AuthRequest extends Request {
 export function requireAuth(
   req: AuthRequest,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   const authHeader = req.headers.authorization;
 
@@ -638,3 +634,205 @@ POST /auth/login
 GET /protected
 Authorization: Bearer <token>
 ```
+
+## STEP - 13 - Refresh Tokens + Logout (Session Control)
+
+- Go to DBeaver and write the query to generate the table for refresh tokens
+
+```sql
+CREATE TABLE refresh_tokens (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  revoked BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+```sql
+CREATE INDEX idx_refresh_tokens_user_id ON refresh_tokens(user_id);
+```
+
+- Why?
+  -> Enables logout and session invalidation
+  -> Supports multiple devices later
+  -> DB-backed security
+
+- Install the cookie support packages
+
+```bash
+npm install cookie-parser
+npm install -D @types/cookie-parser
+```
+
+- Wire the cookie parser into the `index.ts` file
+
+```ts
+import cookieParser from "cookie-parser";
+
+app.use(cookieParser());
+```
+
+- Why
+  -> Read `HttpOnly` cookies safely
+  -> Required for refresh flow
+
+- Create the file `backend/src/utils/refreshToken.ts`
+
+```ts
+import crypto from "crypto";
+
+export function generateRefreshToken(): string {
+  return crypto.randomBytes(64).toString("hex");
+}
+```
+
+- Why
+  -> Not JWT
+  -> Fully random
+  -> Safer for long-lived tokens
+
+- Extend user repository
+
+- Update the file `backend/src/repositories/user.repository.ts`
+
+```ts
+async saveRefreshToken(userId:string, token:string, expiresAt:Date) {
+  await pool.query(
+    `
+      INSERT INTO refresh_tokens (user_id, token, expires_at)
+      VALUES ($1, $2, $3)
+    `,
+    [userId, token, expiresAt]
+  );
+}
+
+async findRefreshToken (token:string) {
+  const result = await pool.query(
+    `
+      SELECT * FROM refresh_tokens
+      WHERE token = $1 AND revoked = false
+    `,
+    [token]
+  );
+
+  return result.rows[0] ?? null;
+}
+
+async revokeRefreshToken(token: string) {
+  await pool.query(
+    `
+      UPDATE refresh_tokens SET revoked = true WHERE token = $1
+    `,
+    [token]
+  );
+}
+```
+
+- Why
+  -> Explicit lifecycle control
+  -> DB decides session validity
+
+- Issue refresh token on login
+- Update login controller (`backend/src/controllers/auth.controller.ts`)
+
+```ts
+import { generateRefreshToken } from "../utils/refreshToken.ts";
+
+// add the below code under the accessToken variable
+const refreshToken = generateRefreshToken();
+const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+await userRepository.saveRefreshToken(user.id, refreshToken, expiresAt);
+
+res.cookie("refreshToken", refreshToken, {
+  httpOnly: true,
+  sameSite: "strict",
+  secure: false, // true in production
+  expires: expiresAt,
+});
+
+res.json({ accessToken });
+```
+
+- Why
+  -> Refresh token never touches JS
+  -> Cookie is CSRF-resistant(sameSite)
+  -> Expiry enforced by DB + browser
+
+- Refresh Endpoint (`backend/src/controllers/auth.controller.ts`)
+
+```ts
+export async function refresh(req: Request, res: Response) {
+  const token = req.cookies.refreshToken;
+  if (!token) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  const stored = await userRepository.findRefreshToken(token);
+  if (!stored) {
+    return res.status(401).json({ message: "Invalid refresh token" });
+  }
+
+  const accessToken = signAccessToken({ userId: stored.user_id });
+  res.json({ accessToken });
+}
+```
+
+- You will get an error in after creating the `refresh` endpoint regarding types. So create the file `backend/src/types/refresh-token.ts`
+
+```ts
+export interface RefreshToken {
+  id: string;
+  user_id: string;
+  token: string;
+  expires_at: Date;
+  revoked: boolean;
+  created_at: Date;
+}
+```
+
+- and then update the `user.repository.ts` file
+
+```ts
+import { RefreshToken } from "../types/refresh-token.ts";
+
+async findRefreshToken(token: string): Promise<RefreshToken | null> {
+  const result = await pool.query<RefreshToken>(
+    `
+    SELECT * FROM refresh_tokens
+    WHERE token = $1 AND revoked = false
+    `,
+    [token]
+  );
+
+  return result.rows[0] ?? null;
+}
+```
+
+- Now you will see that the auth controller has no error in the refresh endpoint
+
+- Logout endpoint
+
+```ts
+export async function logout(req: Request, res: Response) {
+  const token = req.cookies.refreshToken;
+
+  if (token) {
+    await userRepository.revokeRefreshToken(token);
+  }
+
+  res.clearCookie("refreshToken");
+  res.json({ message: "Logged out" });
+}
+```
+
+- Add the routes (`backend/src/routes/auth.routes.ts`)
+
+```ts
+authRouter.post("/refresh", refresh);
+authRouter.post("/logout", logout);
+```
+
+<!-- Continue from Step 7 of the chatgpt -->

@@ -4,6 +4,7 @@ import bcrypt from "bcrypt";
 import { userRepository } from "../repositories/user.repository.ts";
 import { hashPassword } from "../utils/password.ts";
 import { signAccessToken } from "../utils/jwt.ts";
+import { generateRefreshToken } from "../utils/refreshToken.ts";
 
 export async function register(req: Request, res: Response) {
   const { email, password } = req.body;
@@ -59,9 +60,58 @@ export async function login(req: Request, res: Response) {
     });
   }
 
+  // Create access token
   const accessToken = signAccessToken({ userId: user.id });
 
+  // Create refresh token
+  const refreshToken = generateRefreshToken();
+
+  const expiresAt = new Date(
+    Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
+  );
+
+  // Store refresh token in DB
+  await userRepository.saveRefreshToken(user.id, refreshToken, expiresAt);
+
+  // Send refresh token as HttpOnly cookie
+  res.cookie("refreshToken", refreshToken, {
+    httpOnly: true,
+    sameSite: "strict",
+    secure: false, // Set to true in production with HTTPS
+    expires: expiresAt,
+  });
+
+  // Send access token in response
   res.json({
     accessToken,
   });
+}
+
+export async function refresh(req: Request, res: Response) {
+  const token = req.cookies.refreshToken;
+
+  if (!token) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  const stored = await userRepository.findRefreshToken(token);
+
+  if (!stored) {
+    return res.status(401).json({ message: "Invalid refresh token" });
+  }
+
+  const accessToken = signAccessToken({ userId: stored.user_id });
+
+  res.json({ accessToken });
+}
+
+export async function logout(req: Request, res: Response) {
+  const token = req.cookies.refreshToken;
+
+  if (token) {
+    await userRepository.revokeRefreshToken(token);
+  }
+
+  res.clearCookie("refreshToken");
+  res.json({ message: "Logged out" });
 }
