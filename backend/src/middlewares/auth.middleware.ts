@@ -3,6 +3,7 @@ import { verifyAccessToken } from "../utils/jwt.ts";
 
 export interface AuthRequest extends Request {
   userId?: string;
+  roles?: string[];
 }
 
 export function requireAuth(

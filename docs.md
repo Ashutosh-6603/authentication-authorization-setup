@@ -835,4 +835,73 @@ authRouter.post("/refresh", refresh);
 authRouter.post("/logout", logout);
 ```
 
-<!-- Continue from Step 7 of the chatgpt -->
+## STEP - 14 - Role Based Authentication (RBAC)
+
+- Update respository (`backend/src/repositories/user.repository.ts`)
+
+```ts
+async getUserRoles(userId: string): Promise<string[]> {
+  const result = await pool.query<{ name: string }>(
+    `
+    SELECT r.name
+    FROM roles r
+    JOIN user_roles ur ON ur.role_id = r.id
+    WHERE ur.user_id = $1
+    `,
+    [userId]
+  );
+
+  return result.rows.map(r => r.name);
+}
+```
+
+- Why
+  -> DB is the source of truth
+  -> Supports multiple roles per user
+  -> Scales to permission later
+
+- Extend Auth Request
+
+- Update Auth middleware types (`backend/src/middlewares/auth.middleware.ts`)
+
+```ts
+export interface AuthRequest extends Request {
+  userId?: string;
+  roles?: string[];
+}
+```
+
+- Role Middleware
+
+- Create the file `backend/src/middlewares/role.middleware.ts`
+
+```ts
+import { Response, NextFunction } from "express";
+import { AuthRequest } from "./auth.middleware.ts";
+import { userRepository } from "../repositories/user.repository.ts";
+
+export function requireRole(...allowedRoles: string[]) {
+  return async (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const roles = await userRepository.getUserRoles(req.userId);
+    req.roles = roles;
+
+    const hasAccess = roles.some((role) => allowedRoles.includes(role));
+
+    if (!hasAccess) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    next();
+  };
+}
+```
+
+- Why
+  - Variadic roles -> flexible
+    - admin only
+    - admin + super-admin
+  - Reusable everywhere

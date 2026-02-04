@@ -69,4 +69,18 @@ export const userRepository = {
       [token],
     );
   },
+
+  async getUserRoles(userId: string): Promise<string[]> {
+    const result = await pool.query<{ name: string }>(
+      `
+        SELECT r.name
+        FROM roles r
+        JOIN user_roles ur ON ur.role_id = r.id
+        WHERE ur.user_id = $1
+      `,
+      [userId],
+    );
+
+    return result.rows.map((r) => r.name);
+  },
 };
