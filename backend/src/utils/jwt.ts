@@ -5,6 +5,7 @@ const JWT_EXPIRES_IN = "15m";
 
 export interface JwtPayload {
   userId: string;
+  roles: string[];
 }
 
 export function signAccessToken(payload: JwtPayload): string {

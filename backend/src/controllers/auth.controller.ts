@@ -60,8 +60,10 @@ export async function login(req: Request, res: Response) {
     });
   }
 
+  const roles = await userRepository.getUserRoles(user.id);
+
   // Create access token
-  const accessToken = signAccessToken({ userId: user.id });
+  const accessToken = signAccessToken({ userId: user.id, roles });
 
   // Create refresh token
   const refreshToken = generateRefreshToken();
@@ -100,7 +102,9 @@ export async function refresh(req: Request, res: Response) {
     return res.status(401).json({ message: "Invalid refresh token" });
   }
 
-  const accessToken = signAccessToken({ userId: stored.user_id });
+  const roles = await userRepository.getUserRoles(stored.user_id);
+
+  const accessToken = signAccessToken({ userId: stored.user_id, roles });
 
   res.json({ accessToken });
 }

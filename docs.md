@@ -905,3 +905,114 @@ export function requireRole(...allowedRoles: string[]) {
     - admin only
     - admin + super-admin
   - Reusable everywhere
+
+## STEP - 15 - Add Roles into JWT (Performance Optimization)
+
+- Update JWT payload type (`backend/src/utils/jwt.ts`)
+
+```ts
+export interface JwtPayload {
+  userId: string;
+  roles: string[];
+}
+```
+
+- Include roles when signing token
+
+- Update login controller
+
+```ts
+const roles = await userRepository.getUserRoles(user.id);
+
+const accessToken = signAccessToken({
+  userId: user.id,
+  roles,
+});
+```
+
+- Why
+  - Roles snapshot at login
+  - Avoids DB hits per request
+  - Token is short-lived anyway
+
+- Update refresh endpoint (`auth.controller.ts`)
+
+```ts
+const stored = await userRepository.findRefreshToken(token);
+if (!stored) {
+  return res.status(401).json({ message: "Invalid refresh token" });
+}
+
+const roles = await userRepository.getUserRoles(stored.user_id);
+
+const accessToken = signAccessToken({
+  userId: stored.user_id,
+  roles,
+});
+
+res.json({ accessToken });
+```
+
+- Why
+  - Role changes propagate on refresh
+  - DB still controls long-lived sessions
+
+- Update auth middleware (`backend/src/middlewares/auth.middleware.ts`)
+
+```ts
+export interface AuthRequest extends Request {
+  userId?: string;
+  roles?: string[];
+}
+
+export function requireAuth(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+) {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const token = authHeader.split(" ")[1];
+    const payload = verifyAccessToken(token);
+
+    req.userId = payload.userId;
+    req.roles = payload.roles;
+
+    next();
+  } catch {
+    return res.status(401).json({ message: "Invalid token" });
+  }
+}
+```
+
+- Simplify role middlewares (NO DB CALL) (`backend/src/middlewares/role.middleware.ts`)
+
+```ts
+export function requireRole(...allowedRoles: string[]) {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    const roles = req.roles;
+
+    if (!roles) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const hasAccess = roles.some((role) => allowedRoles.includes(role));
+
+    if (!hasAccess) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    next();
+  };
+}
+```
+
+- Why
+  - Zero DB access
+  - Extremely fast
+  - Clean separation of concerns
