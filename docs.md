@@ -1,23 +1,25 @@
-# STEPS
+﻿# Steps
 
-## STEP - 1 - Create backend project
+## Step 1: Create backend project
+
+- Create the initial structure:
 
 ```perl
 auth-system/
- ├─ backend/
- └─ docker/
+ â”œâ”€ backend/
+ â””â”€ docker/
 ```
 
-- Move into the backend folder
+- Move into the `backend` folder and initialize:
 
 ```bash
 cd backend
 npm init -y
 ```
 
-## STEP - 2 - Install dependencies
+## Step 2: Install dependencies
 
-- Run the command
+- Run the following commands:
 
 ```bash
 npm install express dotenv cors pg
@@ -25,6 +27,8 @@ npm install --save-dev nodemon
 npm install -D typescript ts-node nodemon @types/node @types/express @types/cors
 npm i --save-dev @types/pg
 ```
+
+- Package overview:
 
 | Package        | Why                          |
 | -------------- | ---------------------------- |
@@ -39,15 +43,15 @@ npm i --save-dev @types/pg
 | @types/express | TypeScript types for Express |
 | @types/cors    | TypeScript types for CORS    |
 
-## STEP - 3 - Configure TypeScript
+## Step 3: Configure TypeScript
 
-- Run the command
+- Initialize TypeScript:
 
 ```bash
 npx tsc --init
 ```
 
-- Go to `backend/tsconfig.json`
+- Update `backend/tsconfig.json`:
 
 ```json
 {
@@ -66,9 +70,9 @@ npx tsc --init
 }
 ```
 
-## STEP - 4 - Dev Script
+## Step 4: Dev script
 
-- Change this in the package.json file
+- Update `package.json`:
 
 ```json
 {
@@ -79,9 +83,9 @@ npx tsc --init
 }
 ```
 
-## STEP - 5 - Create a minimal server using express
+## Step 5: Create a minimal server with Express
 
-- Create `backend/src/index.ts`
+- Create `backend/src/index.ts`:
 
 ```ts
 import express from "express";
@@ -106,21 +110,20 @@ app.listen(PORT, () => {
 });
 ```
 
-- The `/health` endpoint is mandatory for infra and monitoring
-
-- Run the command
+- Note: The `/health` endpoint is mandatory for infra and monitoring.
+- Run the dev server:
 
 ```bash
 npm run dev
 ```
 
-- Add the `.env` file in the `backend` folder
+- Add a `.env` file in the `backend` folder:
 
 ```env
 PORT=5000
 ```
 
-- Create the `.gitignore` file in the `backend` folder
+- Create a `.gitignore` file in the `backend` folder:
 
 ```gitignore
 node_modules
@@ -128,9 +131,9 @@ dist
 .env
 ```
 
-## STEP - 6 - Setup PostgreSQL Database via Docker
+## Step 6: Set up PostgreSQL via Docker
 
-- Create a file `docker/docker-compose.yml`
+- Create `docker/docker-compose.yml`:
 
 ```yaml
 services:
@@ -149,7 +152,7 @@ services:
 volumes: auth_pgdata
 ```
 
-- Run the command
+- Run the following commands:
 
 ```bash
 cd docker
@@ -157,7 +160,7 @@ cd docker
 docker compose up -d
 ```
 
-- Add the following to the env file
+- Add the following to the `.env` file:
 
 ```env
 DB_HOST=localhost
@@ -167,9 +170,9 @@ DB_USER=auth_user
 DB_PASSWORD=auth_password
 ```
 
-## STEP - 7 - PostgreSQL Connection
+## Step 7: PostgreSQL connection
 
-- Create the file `backend/src/db.ts`
+- Create the file `backend/src/db.ts`:
 
 ```ts
 import dotenv from "dotenv";
@@ -186,11 +189,11 @@ export const pool = new Pool({
 });
 ```
 
-- `Pool` is required for concurrency
+- Why: `Pool` is required for concurrency.
 
-## STEP - 8 - Database Connectivity test
+## Step 8: Database connectivity test
 
-- Update `backend/src/index.ts`
+- Update `backend/src/index.ts`:
 
 ```ts
 import { pool } from "./db.js";
@@ -201,22 +204,21 @@ app.get("/db-test", async (_req, res) => {
 });
 ```
 
-## STEP - 9 - Set up Authentication Database Schema (PostgreSQL)
+## Step 9: Set up authentication database schema (PostgreSQL)
 
-- Go to DBeaver and open the sql script for the `auth_db` database and start writing queries
-
-- Enable `UUID` support
+- In DBeaver, open the SQL script for the `auth_db` database and run the queries below in order.
+- Enable UUID support:
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 ```
 
-- Why
-  -> UUIDs are safer than incremental IDs
-  -> Better for distributed systems
-  -> Avoids user enumeration
+- Why:
+  - UUIDs are safer than incremental IDs.
+  - Better for distributed systems.
+  - Avoids user enumeration.
 
-- Create the `users` table
+- Create the `users` table:
 
 ```sql
 CREATE TABLE users (
@@ -228,13 +230,13 @@ CREATE TABLE users (
 );
 ```
 
-- Why
-  -> `email UNIQUE` -> login identity
-  -> `password_hash` -> never store passwords
-  -> `is_active` -> soft-disable users
-  -> `created_at` -> auditing
+- Why:
+  - `email UNIQUE` -> login identity.
+  - `password_hash` -> never store passwords.
+  - `is_active` -> soft-disable users.
+  - `created_at` -> auditing.
 
-- Create the `roles` table
+- Create the `roles` table:
 
 ```sql
 CREATE TABLE roles (
@@ -243,12 +245,12 @@ CREATE TABLE roles (
 );
 ```
 
-- Why
-  -> Roles change rarely
-  -> `SERIAL` is fine here (internal use only)
-  -> Separate tables enable RBAC scaling
+- Why:
+  - Roles change rarely.
+  - `SERIAL` is fine here (internal use only).
+  - Separate tables enable RBAC scaling.
 
-- Create `Seed` roles
+- Seed roles:
 
 ```sql
 INSERT INTO roles (name)
@@ -258,11 +260,11 @@ VALUES
   ('super-admin');
 ```
 
-- Why
-  -> Fixed roles
-  -> Enforced by DB itself, not code enums
+- Why:
+  - Fixed roles.
+  - Enforced by the DB itself, not code enums.
 
-- `user_roles` (many-to-many)
+- `user_roles` (many-to-many):
 
 ```sql
 CREATE TABLE user_roles (
@@ -270,25 +272,25 @@ CREATE TABLE user_roles (
   role_id INT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
 ```
 
-- Why
-  -> Users can have multiple roles
-  -> `ON DELETE CASCADE` keeps data clean
-  -> Composite PK prevents duplicates
+- Why:
+  - Users can have multiple roles.
+  - `ON DELETE CASCADE` keeps data clean.
+  - Composite PK prevents duplicates.
 
-- Indexes (important, minimal)
+- Indexes (important, minimal):
 
 ```sql
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_user_roles_user_id ON user_roles(user_id);
 ```
 
-- Why
-  -> Login is email based
-  -> Role lookup happens on every request.
+- Why:
+  - Login is email based.
+  - Role lookup happens on every request.
 
-## STEP - 10 - Type-safe DB Access layer (Users)
+## Step 10: Type-safe DB access layer (Users)
 
-- Create DB types, so create the file `backend/src/types/user.ts`
+- Create DB types at `backend/src/types/user.ts`:
 
 ```ts
 export interface User {
@@ -300,12 +302,12 @@ export interface User {
 }
 ```
 
-- Why
-  -> Central source of truth
-  -> Prevents "any"-driven bug
-  -> Mirrors DB exactly (important)
+- Why:
+  - Central source of truth.
+  - Prevents "any"-driven bugs.
+  - Mirrors the DB exactly (important).
 
-- Create users repository, create the file `backend/src/repositories/user.repository.ts`
+- Create the users repository at `backend/src/repositories/user.repository.ts`:
 
 ```ts
 import { pool } from "../db.ts";
@@ -336,14 +338,13 @@ export const userRepository = {
 };
 ```
 
-- Why
-  -> Parameterized queries - SQL injection safe
-  -> Repository pattern - business logic stays clean
-  -> No framework dependencies
+- Why:
+  - Parameterized queries -> SQL injection safe.
+  - Repository pattern -> business logic stays clean.
+  - No framework dependencies.
 
-- Temporary test endpoint (sanity only)
-
-- Update 'backend/src/index.ts'
+- Temporary test endpoint (sanity only).
+- Update `backend/src/index.ts`:
 
 ```ts
 import { userRepository } from "./repositories/user.repository.ts";
@@ -357,22 +358,22 @@ app.post("/test-user", async (req, res) => {
 });
 ```
 
-- Test it in Postman
+- Test it in Postman.
 
-## STEP - 11 - User Registration and Password Hashing and Validation
+## Step 11: User registration, password hashing, and validation
 
-- Install required dependencies
+- Install required dependencies:
 
 ```bash
 npm install bcrypt
 npm install -D @types/bcrypt
 ```
 
-- Why
-  -> `bcrypt` is battle-tested
-  -> Slow hashing - brute-force resistant
+- Why:
+  - `bcrypt` is battle-tested.
+  - Slow hashing -> brute-force resistant.
 
-- Create the password hashing utility, create the file `backend/src/utils/password.ts`
+- Create the password hashing utility at `backend/src/utils/password.ts`:
 
 ```ts
 import bcrypt from "bcrypt";
@@ -384,13 +385,12 @@ export async function hashPassword(password: string): Promise<string> {
 }
 ```
 
-- Why
-  -> Centralized hashing logic
-  -> Easy to tune cost factor later
+- Why:
+  - Centralized hashing logic.
+  - Easy to tune cost factor later.
 
-- Extend user repository for role Assignment
-
-- Update 'backend/src/repositories/user.repository.ts'
+- Extend the user repository for role assignment.
+- Update `backend/src/repositories/user.repository.ts`:
 
 ```ts
 async assignRole(userId: string, roleName: string): Promise<void> {
@@ -404,14 +404,13 @@ async assignRole(userId: string, roleName: string): Promise<void> {
 }
 ```
 
-- Why
-  -> DB decides role ID
-  -> No hardcoded role numbers
-  -> Safe and scalable
+- Why:
+  - DB decides role ID.
+  - No hardcoded role numbers.
+  - Safe and scalable.
 
-- Create user registration endpoint
-
-- Create the file `backend/src/controllers/auth.controller.ts`
+- Create the user registration endpoint.
+- Create the file `backend/src/controllers/auth.controller.ts`:
 
 ```ts
 import { Request, Response } from "express";
@@ -443,14 +442,13 @@ export async function register(req: Request, res: Response) {
 }
 ```
 
-- Why
-  -> Validation first
-  -> Hash before DB insert
-  -> Default role assignment is explicit
+- Why:
+  - Validation first.
+  - Hash before DB insert.
+  - Default role assignment is explicit.
 
-- Create the auth routes file
-
-- Create the file `backend/src/routes/auth.routes.ts`
+- Create the auth routes file.
+- Create the file `backend/src/routes/auth.routes.ts`:
 
 ```ts
 import { Router } from "express";
@@ -461,9 +459,8 @@ export const authRouter = Router();
 authRouter.post("/register", register);
 ```
 
-- Wire routes and remove test endpoint
-
-- Update 'backend/src/index.ts'
+- Wire routes and remove the test endpoint.
+- Update `backend/src/index.ts`:
 
 ```ts
 import { authRouter } from "./routes/auth.routes.ts";
@@ -471,23 +468,22 @@ import { authRouter } from "./routes/auth.routes.ts";
 app.use("/auth", authRouter);
 ```
 
-## STEP - 12 - Login and JWT Access Token (Authentication Core)
+## Step 12: Login and JWT access token (Authentication core)
 
-- Install the jwt dependencies
+- Install the JWT dependencies:
 
 ```bash
 npm install jsonwebtoken
 npm install -D @types/jsonwebtoken
 ```
 
-- Why
-  -> Stateless auth
-  -> Scales Horizontally
-  -> Industry standard for APIs
+- Why:
+  - Stateless auth.
+  - Scales horizontally.
+  - Industry standard for APIs.
 
-- Create the JWT utility
-
-- Create the file `backend/src/utils/jwt.ts`
+- Create the JWT utility.
+- Create the file `backend/src/utils/jwt.ts`:
 
 ```ts
 import jwt from "jsonwebtoken";
@@ -508,24 +504,23 @@ export function verifyAccessToken(token: string): JwtPayload {
 }
 ```
 
-- Why
-  -> Centralized token logic
-  -> Short expiry - safer
-  -> Typed payload
+- Why:
+  - Centralized token logic.
+  - Short expiry -> safer.
+  - Typed payload.
 
-- Add JWT secret to the `env` file
+- Add JWT secret to the `.env` file:
 
 ```env
 JWT_SECRET=super_secret_jwt_key_change_later
 ```
 
-- Why
-  -> Never hardcode secrets
-  -> Will rotate later
+- Why:
+  - Never hardcode secrets.
+  - Will rotate later.
 
-- Create the login controller
-
-- Add the api to the `backend/src/controllers/auth.controller.ts`
+- Create the login controller.
+- Add the API to `backend/src/controllers/auth.controller.ts`:
 
 ```ts
 import bcrypt from "bcrypt";
@@ -554,12 +549,12 @@ export async function login(req: Request, res: Response) {
 }
 ```
 
-- Why
-  -> Same error for wrong email/password (security)
-  -> Token contains only usedId
-  -> No rotes yet (intentional)
+- Why:
+  - Same error for wrong email/password (security).
+  - Token contains only `userId`.
+  - No routes yet (intentional).
 
-- Add the login route to the `auth.routes.ts` file
+- Add the login route to `backend/src/routes/auth.routes.ts`:
 
 ```ts
 import { login } from "../controllers/auth.controller.ts";
@@ -567,9 +562,8 @@ import { login } from "../controllers/auth.controller.ts";
 authRouter.post("/login", login);
 ```
 
-- Create the Auth middleware
-
-- Create the file `backend/src/middlewares/auth.middleware.ts`
+- Create the auth middleware.
+- Create the file `backend/src/middlewares/auth.middleware.ts`:
 
 ```ts
 import { Request, Response, NextFunction } from "express";
@@ -601,14 +595,13 @@ export function requireAuth(
 }
 ```
 
-- Why
-  -> Backend-enforced auth
-  -> Token verification per request
-  -> Types request extension
+- Why:
+  - Backend-enforced auth.
+  - Token verification per request.
+  - Typed request extension.
 
-- Test the protected route
-
-- Add this temporary route in `index.ts`
+- Test the protected route.
+- Add this temporary route in `index.ts`:
 
 ```ts
 import { requireAuth } from "./middlewares/auth.middleware.ts";
@@ -618,7 +611,7 @@ app.get("/protected", requireAuth, (req, res) => {
 });
 ```
 
-- Login
+- Login:
 
 ```postman
 POST /auth/login
@@ -628,16 +621,16 @@ POST /auth/login
 }
 ```
 
-- Use token in the protected route
+- Use the token in the protected route:
 
 ```postman
 GET /protected
 Authorization: Bearer <token>
 ```
 
-## STEP - 13 - Refresh Tokens + Logout (Session Control)
+## Step 13: Refresh tokens and logout (Session control)
 
-- Go to DBeaver and write the query to generate the table for refresh tokens
+- In DBeaver, create the `refresh_tokens` table:
 
 ```sql
 CREATE TABLE refresh_tokens (
@@ -654,19 +647,19 @@ CREATE TABLE refresh_tokens (
 CREATE INDEX idx_refresh_tokens_user_id ON refresh_tokens(user_id);
 ```
 
-- Why?
-  -> Enables logout and session invalidation
-  -> Supports multiple devices later
-  -> DB-backed security
+- Why:
+  - Enables logout and session invalidation.
+  - Supports multiple devices later.
+  - DB-backed security.
 
-- Install the cookie support packages
+- Install the cookie support packages:
 
 ```bash
 npm install cookie-parser
 npm install -D @types/cookie-parser
 ```
 
-- Wire the cookie parser into the `index.ts` file
+- Wire the cookie parser into the `index.ts` file:
 
 ```ts
 import cookieParser from "cookie-parser";
@@ -674,11 +667,11 @@ import cookieParser from "cookie-parser";
 app.use(cookieParser());
 ```
 
-- Why
-  -> Read `HttpOnly` cookies safely
-  -> Required for refresh flow
+- Why:
+  - Read `HttpOnly` cookies safely.
+  - Required for refresh flow.
 
-- Create the file `backend/src/utils/refreshToken.ts`
+- Create the file `backend/src/utils/refreshToken.ts`:
 
 ```ts
 import crypto from "crypto";
@@ -688,14 +681,13 @@ export function generateRefreshToken(): string {
 }
 ```
 
-- Why
-  -> Not JWT
-  -> Fully random
-  -> Safer for long-lived tokens
+- Why:
+  - Not JWT.
+  - Fully random.
+  - Safer for long-lived tokens.
 
-- Extend user repository
-
-- Update the file `backend/src/repositories/user.repository.ts`
+- Extend the user repository.
+- Update the file `backend/src/repositories/user.repository.ts`:
 
 ```ts
 async saveRefreshToken(userId:string, token:string, expiresAt:Date) {
@@ -730,12 +722,12 @@ async revokeRefreshToken(token: string) {
 }
 ```
 
-- Why
-  -> Explicit lifecycle control
-  -> DB decides session validity
+- Why:
+  - Explicit lifecycle control.
+  - DB decides session validity.
 
-- Issue refresh token on login
-- Update login controller (`backend/src/controllers/auth.controller.ts`)
+- Issue refresh token on login.
+- Update the login controller (`backend/src/controllers/auth.controller.ts`):
 
 ```ts
 import { generateRefreshToken } from "../utils/refreshToken.ts";
@@ -756,12 +748,12 @@ res.cookie("refreshToken", refreshToken, {
 res.json({ accessToken });
 ```
 
-- Why
-  -> Refresh token never touches JS
-  -> Cookie is CSRF-resistant(sameSite)
-  -> Expiry enforced by DB + browser
+- Why:
+  - Refresh token never touches JS.
+  - Cookie is CSRF-resistant (sameSite).
+  - Expiry enforced by DB + browser.
 
-- Refresh Endpoint (`backend/src/controllers/auth.controller.ts`)
+- Refresh endpoint (`backend/src/controllers/auth.controller.ts`):
 
 ```ts
 export async function refresh(req: Request, res: Response) {
@@ -780,7 +772,7 @@ export async function refresh(req: Request, res: Response) {
 }
 ```
 
-- You will get an error in after creating the `refresh` endpoint regarding types. So create the file `backend/src/types/refresh-token.ts`
+- You will get a type error after creating the `refresh` endpoint. Create the file `backend/src/types/refresh-token.ts`:
 
 ```ts
 export interface RefreshToken {
@@ -793,7 +785,7 @@ export interface RefreshToken {
 }
 ```
 
-- and then update the `user.repository.ts` file
+- Then update the `user.repository.ts` file:
 
 ```ts
 import { RefreshToken } from "../types/refresh-token.ts";
@@ -811,9 +803,9 @@ async findRefreshToken(token: string): Promise<RefreshToken | null> {
 }
 ```
 
-- Now you will see that the auth controller has no error in the refresh endpoint
+- Now the auth controller should have no error in the refresh endpoint.
 
-- Logout endpoint
+- Logout endpoint:
 
 ```ts
 export async function logout(req: Request, res: Response) {
@@ -828,16 +820,16 @@ export async function logout(req: Request, res: Response) {
 }
 ```
 
-- Add the routes (`backend/src/routes/auth.routes.ts`)
+- Add the routes (`backend/src/routes/auth.routes.ts`):
 
 ```ts
 authRouter.post("/refresh", refresh);
 authRouter.post("/logout", logout);
 ```
 
-## STEP - 14 - Role Based Authentication (RBAC)
+## Step 14: Role-based authorization (RBAC)
 
-- Update respository (`backend/src/repositories/user.repository.ts`)
+- Update repository (`backend/src/repositories/user.repository.ts`):
 
 ```ts
 async getUserRoles(userId: string): Promise<string[]> {
@@ -855,14 +847,13 @@ async getUserRoles(userId: string): Promise<string[]> {
 }
 ```
 
-- Why
-  -> DB is the source of truth
-  -> Supports multiple roles per user
-  -> Scales to permission later
+- Why:
+  - DB is the source of truth.
+  - Supports multiple roles per user.
+  - Scales to permissions later.
 
-- Extend Auth Request
-
-- Update Auth middleware types (`backend/src/middlewares/auth.middleware.ts`)
+- Extend Auth Request.
+- Update auth middleware types (`backend/src/middlewares/auth.middleware.ts`):
 
 ```ts
 export interface AuthRequest extends Request {
@@ -871,9 +862,8 @@ export interface AuthRequest extends Request {
 }
 ```
 
-- Role Middleware
-
-- Create the file `backend/src/middlewares/role.middleware.ts`
+- Role middleware.
+- Create the file `backend/src/middlewares/role.middleware.ts`:
 
 ```ts
 import { Response, NextFunction } from "express";
@@ -900,15 +890,15 @@ export function requireRole(...allowedRoles: string[]) {
 }
 ```
 
-- Why
-  - Variadic roles -> flexible
-    - admin only
-    - admin + super-admin
-  - Reusable everywhere
+- Why:
+  - Variadic roles -> flexible.
+  - Admin only.
+  - Admin + super-admin.
+  - Reusable everywhere.
 
-## STEP - 15 - Add Roles into JWT (Performance Optimization)
+## Step 15: Add roles to JWT (Performance optimization)
 
-- Update JWT payload type (`backend/src/utils/jwt.ts`)
+- Update JWT payload type (`backend/src/utils/jwt.ts`):
 
 ```ts
 export interface JwtPayload {
@@ -917,9 +907,8 @@ export interface JwtPayload {
 }
 ```
 
-- Include roles when signing token
-
-- Update login controller
+- Include roles when signing the token.
+- Update the login controller:
 
 ```ts
 const roles = await userRepository.getUserRoles(user.id);
@@ -930,12 +919,12 @@ const accessToken = signAccessToken({
 });
 ```
 
-- Why
-  - Roles snapshot at login
-  - Avoids DB hits per request
-  - Token is short-lived anyway
+- Why:
+  - Roles snapshot at login.
+  - Avoids DB hits per request.
+  - Token is short-lived anyway.
 
-- Update refresh endpoint (`auth.controller.ts`)
+- Update refresh endpoint (`auth.controller.ts`):
 
 ```ts
 const stored = await userRepository.findRefreshToken(token);
@@ -953,11 +942,11 @@ const accessToken = signAccessToken({
 res.json({ accessToken });
 ```
 
-- Why
-  - Role changes propagate on refresh
-  - DB still controls long-lived sessions
+- Why:
+  - Role changes propagate on refresh.
+  - DB still controls long-lived sessions.
 
-- Update auth middleware (`backend/src/middlewares/auth.middleware.ts`)
+- Update auth middleware (`backend/src/middlewares/auth.middleware.ts`):
 
 ```ts
 export interface AuthRequest extends Request {
@@ -990,7 +979,7 @@ export function requireAuth(
 }
 ```
 
-- Simplify role middlewares (NO DB CALL) (`backend/src/middlewares/role.middleware.ts`)
+- Simplify role middleware (no DB call) (`backend/src/middlewares/role.middleware.ts`):
 
 ```ts
 export function requireRole(...allowedRoles: string[]) {
@@ -1012,7 +1001,9 @@ export function requireRole(...allowedRoles: string[]) {
 }
 ```
 
-- Why
-  - Zero DB access
-  - Extremely fast
-  - Clean separation of concerns
+- Why:
+  - Zero DB access.
+  - Extremely fast.
+  - Clean separation of concerns.
+
+<!-- Continue from Step - 9 -->
