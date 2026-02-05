@@ -61,9 +61,9 @@ export async function login(req: Request, res: Response) {
   }
 
   const roles = await userRepository.getUserRoles(user.id);
-
+  const permissions = await userRepository.getUserPermissions(user.id);
   // Create access token
-  const accessToken = signAccessToken({ userId: user.id, roles });
+  const accessToken = signAccessToken({ userId: user.id, roles, permissions });
 
   // Create refresh token
   const refreshToken = generateRefreshToken();
@@ -103,8 +103,13 @@ export async function refresh(req: Request, res: Response) {
   }
 
   const roles = await userRepository.getUserRoles(stored.user_id);
+  const permissions = await userRepository.getUserPermissions(stored.user_id);
 
-  const accessToken = signAccessToken({ userId: stored.user_id, roles });
+  const accessToken = signAccessToken({
+    userId: stored.user_id,
+    roles,
+    permissions,
+  });
 
   res.json({ accessToken });
 }

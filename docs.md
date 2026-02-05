@@ -1,5 +1,7 @@
 ﻿# Steps
 
+## Backend Integration
+
 ## Step 1: Create backend project
 
 - Create the initial structure:
@@ -1006,4 +1008,257 @@ export function requireRole(...allowedRoles: string[]) {
   - Extremely fast.
   - Clean separation of concerns.
 
-<!-- Continue from Step - 9 -->
+## Step 16: Permission-Based Authorization (PBAC)
+
+- Database Schema (permissions)
+
+```sql
+CREATE TABLE permissions (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE role_permissions (
+  role_id INT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+  permission_id INT NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+  PRIMARY KEY (role_id, permission_id)
+);
+```
+
+- Why:
+  - Many-to-many relationship.
+  - Roles stay stable
+  - Permissions grow with features
+
+- Seed base permissions
+
+```sql
+INSERT INTO permissions (name) VALUES
+  ('todo:create'),
+  ('todo:update'),
+  ('todo:delete'),
+  ('user:read'),
+  ('user:ban');
+```
+
+- Why:
+  - Permissions are verbs on resources.
+  - Easy to reason about
+  - Auditable
+
+- Map permissions to roles
+
+```sql
+-- admin permissions
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id
+FROM roles r, permissions p
+WHERE r.name = 'admin'
+AND p.name IN ('todo:create', 'todo:update', 'user:read');
+
+-- super-admin gets everything
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id
+FROM roles r, permissions p
+WHERE r.name = 'super-admin';
+```
+
+- Why"
+  - DB is the source of truth
+  - No permission logic in code
+
+- Fetch permissions for a user (Repository method in `user.repository.ts`)
+
+```ts
+async getUserPermissions(userId: string): Promise<string[]> {
+  const result = await pool.query<{ name: string }>(
+    `
+    SELECT DISTINCT p.name
+    FROM permissions p
+    JOIN role_permissions rp ON rp.permission_id = p.id
+    JOIN user_roles ur ON ur.role_id = rp.role_id
+    WHERE ur.user_id = $1
+    `,
+    [userId]
+  );
+
+  return result.rows.map(r => r.name);
+}
+```
+
+- Why:
+  - Derived permissions
+  - Supports multi-role users
+  - Future-proof
+
+- Include permission in JWT (access token)
+
+- Login & refresh (conceptual change only)
+
+```ts
+const permissions = await userRepository.getUserPermissions(user.id);
+
+signAccessToken({
+  userId: user.id,
+  roles,
+  permissions,
+});
+```
+
+- Update JWT payload type (`backend/src/utils/jwt.ts`):
+
+```ts
+export interface JwtPayload {
+  userId: string;
+  roles: string[];
+  permissions: string[];
+}
+```
+
+- Why:
+  - Zero DB hits per request
+  - Permissions evaluated instantly
+  - Refresh keeps them in sync
+
+- Permission middleware (`backend/src/middlewares/permission.middleware.ts`):
+
+```ts
+import { Response, NextFunction } from "express";
+import { AuthRequest } from "./auth.middleware.ts";
+
+export function requirePermission(...allowed: string[]) {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    const permissions = req.permissions;
+
+    if (!permissions) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const hasPermission = permissions.some((p) => allowed.includes(p));
+
+    if (!hasPermission) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    next();
+  };
+}
+```
+
+- Example usage
+
+```ts
+app.post("/todos", requireAuth, requirePermission("todo:create"), createTodo);
+
+app.delete("/users/:id", requireAuth, requirePermission("user:ban"), banUser);
+```
+
+## Frontend Integration
+
+## Step 1: Create React app with Vite
+
+```bash
+npm create vite@latest ./
+```
+
+- Install required dependencies:
+
+```bash
+npm install @reduxjs/toolkit react-redux
+```
+
+- Why:
+  - Official Redux solution
+  - Less boilerplate
+  - Immutable updates handled internally
+
+- Create Redux store (`frontend/src/store/index.ts`):
+
+```ts
+import { configureStore } from "@reduxjs/toolkit";
+import authReducer from "./authSlice";
+
+export const store = configureStore({
+  reducer: {
+    auth: authReducer,
+  },
+});
+
+export type RootState = ReturnType<typeof store.getState>;
+export type AppDispatch = typeof store.dispatch;
+```
+
+- Why:
+  - Single source of truth
+  - Typed store (important for TS)
+  - Scales cleanly
+
+- Auth slice (core state) (`frontend/src/store/authSlice.ts`):
+
+```ts
+import { createSlice, PayloadAction } from "@reduxjs/toolkit";
+
+interface AuthState {
+  accessToken: string | null;
+}
+
+const initialState: AuthState = {
+  accessToken: null,
+};
+
+const authSlice = createSlice({
+  name: "auth",
+  initialState,
+  reducers: {
+    setAccessToken(state, action: PayloadAction<string>) {
+      state.accessToken = action.payload;
+    },
+    clearAuth(state) {
+      state.accessToken = null;
+    },
+  },
+});
+
+export const { setAccessToken, clearAuth } = authSlice.actions;
+export default authSlice.reducer;
+```
+
+- Why:
+  - Only access token stored
+  - No roles/permissions yet (derived later)
+  - Simple, predictable state
+
+- Provide the store in `frontend/src/main.tsx`:
+
+```tsx
+import React from "react";
+import ReactDOM from "react-dom/client";
+import { Provider } from "react-redux";
+import { store } from "./store";
+import App from "./App";
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <Provider store={store}>
+    <App />
+  </Provider>,
+);
+```
+
+- Why:
+  - Redux becomes globally accessible
+  - Required for hooks like `useSelector` and `useDispatch`
+
+- Typed Redux hooks (`frontend/src/store/hooks.ts`):
+
+```ts
+import { TypedUseSelectorHook, useDispatch, useSelector } from "react-redux";
+import type { RootState, AppDispatch } from "./index";
+
+export const useAppDispatch = () => useDispatch<AppDispatch>();
+export const useAppSelector: TypedUseSelectorHook<RootState> = useSelector;
+```
+
+- Why:
+  - Type-safe Redux usage
+  - Prevents `any` creep
+  - Industry standard
