@@ -1262,3 +1262,122 @@ export const useAppSelector: TypedUseSelectorHook<RootState> = useSelector;
   - Type-safe Redux usage
   - Prevents `any` creep
   - Industry standard
+
+## STEP 2: Tanstack Query Setup + Auth-Aware API Layer
+
+- Install dependencies:
+
+```bash
+npm install @tanstack/react-query
+```
+
+- Create Query Client (`frontend/src/lib/queryClient.ts`):
+
+```ts
+import { QueryClient } from "@tanstack/react-query";
+
+export const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+```
+
+- Why:
+  | Option | Reason |
+  | ----------------------------- | ------------------------------------- |
+  | `retry: 1` | Avoid infinite retries on 401 |
+  | `refetchOnWindowFocus: false` | Prevent surprise background refetches |
+
+- React Query is for server state orchestration, not uncontrolled refetching
+
+- Provide Query Client to app
+
+- Update `main.tsx`
+
+```tsx
+import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "./lib/queryClient";
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <Provider store={store}>
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>
+  </Provider>,
+);
+```
+
+- Central API client (fetch-based)
+- Create `frontend/src/lib/api.ts`:
+
+```ts
+import { store } from "../store";
+
+const BASE_URL = "http://localhost:5000";
+
+export async function apiFetch(path: string, options: RequestInit = {}) {
+  const state = store.getState();
+  const token = state.auth.accessToken;
+
+  const res = await fetch(`${BASE_URL}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token && { Authorization: `Bearer ${token}` }),
+      ...options.headers,
+    },
+    credentials: "include", // required for refresh cookie
+  });
+
+  if (!res.ok) {
+    throw new Error("Request failed");
+  }
+
+  return res.json();
+}
+```
+
+- Why this architecture:
+  - Why not call fetch directly in components?
+    - You duplicate headers
+    - You duplicate error handling
+    - Hard to attach tokens consistently
+    - This centralizes all auth behavior.
+
+  - Why use store.getState() instead of passing token manually?
+    - React Query functions run outside components
+    - Avoids prop-drilling
+    - Keeps API layer framework-agnostic
+
+  - Why `credentials: "include"`?
+    - Refresh token is stored in HttpOnly cookie
+    - Without this, browser won’t send it
+    - Required for `/auth/refresh`
+
+  - Why Redux + React Query combination works
+    - Redux stores authentication state
+    - React Query manages server interaction lifecycle
+
+- Test Infrastructure
+
+- Example usage in a component
+
+```tsx
+import { useQuery } from "@tanstack/react-query";
+import { apiFetch } from "../lib/api";
+
+export function HealthCheck() {
+  const { data, isLoading } = useQuery({
+    queryKey: ["health"],
+    queryFn: () => apiFetch("/health"),
+  });
+
+  if (isLoading) return <p>Loading...</p>;
+
+  return <pre>{JSON.stringify(data)}</pre>;
+}
+```
