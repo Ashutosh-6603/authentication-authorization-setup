@@ -1381,3 +1381,132 @@ export function HealthCheck() {
   return <pre>{JSON.stringify(data)}</pre>;
 }
 ```
+
+## STEP 3: Login Mutation + Access Token Storage (Redux + React Query)
+
+- Create the login api function (`src/features/auth/api.ts`)
+
+```ts
+import { apiFetch } from "../../lib/api";
+
+export async function loginRequest(email: string, password: string) {
+  return apiFetch("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
+```
+
+- Why separate files?:
+  - Keeps API layer modular
+  - Feature-based structure
+  - Scales when auth grows
+
+- Create login mutation hook (`src/features/auth/useLogin.ts`)
+
+```ts
+import { useMutation } from "@tanstack/react-query";
+import { useAppDispatch } from "../../store/hooks";
+import { setAccessToken } from "../../store/authSlice";
+import { loginRequest } from "./api";
+
+export function useLogin() {
+  const dispatch = useAppDispatch();
+
+  return useMutation({
+    mutationFn: ({ email, password }: { email: string; password: string }) =>
+      loginRequest(email, password),
+
+    onSuccess: (data) => {
+      dispatch(setAccessToken(data.accessToken));
+    },
+  });
+}
+```
+
+- Install tailwind css
+
+```bash
+npm install tailwindcss @tailwindcss/vite
+```
+
+- Update the `vite.config.ts` file to include the plugin:
+
+```ts
+import { defineConfig } from "vite";
+import tailwindcss from "@tailwindcss/vite";
+
+export default defineConfig({
+  plugins: [tailwindcss()],
+});
+```
+
+- import tailwind to the css file (`frontend/src/index.css`):
+
+```css
+@import "tailwindcss";
+```
+
+- Create a basic login page (`src/pages/Login.tsx`):
+
+```tsx
+import { useState } from "react";
+import { useLogin } from "../features/auth/useLogin";
+
+export function Login() {
+  const { mutate, isPending, isError } = useLogin();
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    mutate({ email, password });
+  }
+
+  return (
+    <div className="flex items-center justify-center min-h-screen bg-gray-100">
+      <form
+        onSubmit={handleSubmit}
+        className="bg-white p-6 rounded-lg shadow-md w-80"
+      >
+        <h2 className="text-xl font-semibold mb-4 text-center">Login</h2>
+
+        <input
+          className="w-full mb-3 px-3 py-2 border rounded"
+          placeholder="Email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+
+        <input
+          className="w-full mb-4 px-3 py-2 border rounded"
+          type="password"
+          placeholder="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+
+        <button
+          className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700"
+          disabled={isPending}
+        >
+          {isPending ? "Logging in..." : "Login"}
+        </button>
+
+        {isError && <p className="text-red-500 mt-2 text-sm">Login failed</p>}
+      </form>
+    </div>
+  );
+}
+```
+
+- Why store only accessToken in Redux?
+  - Because:
+    - It is short-lived
+    - It is needed globally
+    - It changes over time
+  - We do not store
+    - Refresh token (cookie)
+    - User data yet
+    - Roles separately
