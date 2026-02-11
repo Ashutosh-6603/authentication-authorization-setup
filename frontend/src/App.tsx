@@ -1,23 +1,30 @@
-import { useQuery } from "@tanstack/react-query";
-import { apiFetch } from "./lib/api";
+import { useEffect } from "react";
+import { Login } from "./pages/Login";
+import { useAppDispatch } from "./store/hooks";
+import { refreshRequest } from "./features/auth/api";
+import { clearAuth, setAccessToken } from "./store/authSlice/authSlice";
 
 function App() {
+  const dispatch = useAppDispatch();
+
+  useEffect(() => {
+    async function tryRefresh() {
+      try {
+        const data = await refreshRequest();
+        dispatch(setAccessToken(data.accessToken));
+      } catch (error) {
+        dispatch(clearAuth());
+      }
+    }
+
+    tryRefresh();
+  }, [dispatch]);
+
   return (
     <>
-      <HealthCheck />
+      <Login />
     </>
   );
 }
 
 export default App;
-
-export function HealthCheck() {
-  const { data, isLoading } = useQuery({
-    queryKey: ["health"],
-    queryFn: () => apiFetch("/health"),
-  });
-
-  if (isLoading) return <p>Loading...</p>;
-
-  return <pre>hi {JSON.stringify(data)}</pre>;
-}

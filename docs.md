@@ -1510,3 +1510,382 @@ export function Login() {
     - Refresh token (cookie)
     - User data yet
     - Roles separately
+
+- Protected Route (Redux-based)
+- Create a proteccted page (`src/routes/ProtectedRoute.tsx`)
+
+```tsx
+import { Navigate } from "react-router-dom";
+import { useAppSelector } from "../store/hooks";
+
+export function ProtectedRoute({ children }: { children: JSX.Element }) {
+  const token = useAppSelector((state) => state.auth.accessToken);
+
+  if (!token) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return children;
+}
+```
+
+- Login Page with React Hook Form
+
+- Install React Hook Form
+
+```bash
+npm install react-hook-form
+```
+
+- Install yup for validation
+
+```bash
+npm install yup @hookform/resolvers
+```
+
+- Create Login Validation Schema (`src/features/auth/loginSchema.ts`)
+
+```ts
+import * as yup from "yup";
+
+export const loginSchema = yup.object({
+  email: yup
+    .string()
+    .required("Email is required")
+    .email("Invalid email format"),
+
+  password: yup
+    .string()
+    .required("Password is required")
+    .min(6, "Minimum 6 characters"),
+});
+```
+
+- Update the login page to use React Hook Form and yup (`src/pages/Login.tsx`):
+
+```tsx
+import { useForm } from "react-hook-form";
+import { yupResolver } from "@hookform/resolvers/yup";
+import { useLogin } from "../features/auth/useLogin";
+import { loginSchema } from "../features/auth/loginSchema";
+
+interface LoginFormInputs {
+  email: string;
+  password: string;
+}
+
+export function Login() {
+  const { mutate, isPending, isError } = useLogin();
+
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<LoginFormInputs>({
+    resolver: yupResolver(loginSchema),
+  });
+
+  function onSubmit(data: LoginFormInputs) {
+    mutate(data);
+  }
+
+  return (
+    <div className="flex items-center justify-center min-h-screen bg-gray-100">
+      <form
+        onSubmit={handleSubmit(onSubmit)}
+        className="bg-white p-6 rounded-lg shadow-md w-80"
+      >
+        <h2 className="text-xl font-semibold mb-4 text-center">Login</h2>
+
+        {/* Email */}
+        <input
+          {...register("email")}
+          className="w-full mb-1 px-3 py-2 border rounded"
+          placeholder="Email"
+        />
+        {errors.email && (
+          <p className="text-red-500 text-sm mb-2">{errors.email.message}</p>
+        )}
+
+        {/* Password */}
+        <input
+          type="password"
+          {...register("password")}
+          className="w-full mb-1 px-3 py-2 border rounded"
+          placeholder="Password"
+        />
+        {errors.password && (
+          <p className="text-red-500 text-sm mb-3">{errors.password.message}</p>
+        )}
+
+        <button
+          type="submit"
+          disabled={isPending}
+          className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+        >
+          {isPending ? "Logging in..." : "Login"}
+        </button>
+
+        {isError && (
+          <p className="text-red-500 mt-3 text-sm text-center">
+            Invalid credentials
+          </p>
+        )}
+      </form>
+    </div>
+  );
+}
+```
+
+## STEP 4: Token Lifecycle Management (Silent Refresh + 401 Handling)
+
+- Create refresh API function (`src/features/auth/api.ts`):
+
+```ts
+import { apiFetch } from "../../lib/api";
+
+export async function refreshRequest() {
+  return apiFetch("/auth/refresh", {
+    method: "POST",
+  });
+}
+```
+
+- Add silent refresh on app startup (`src/App.tsx`):
+
+```tsx
+import { useEffect } from "react";
+import { useAppDispatch } from "./store/hooks";
+import { setAccessToken, clearAuth } from "./store/authSlice";
+import { refreshRequest } from "./features/auth/api";
+
+function App() {
+  const dispatch = useAppDispatch();
+
+  useEffect(() => {
+    async function tryRefresh() {
+      try {
+        const data = await refreshRequest();
+        dispatch(setAccessToken(data.accessToken));
+      } catch {
+        dispatch(clearAuth());
+      }
+    }
+
+    tryRefresh();
+  }, [dispatch]);
+
+  return <>{/* your routes here */}</>;
+}
+
+export default App;
+```
+
+- Upgrade apiFetch to auto-refresh on 401
+- Update `src/lib/api.ts`:
+
+```ts
+import { store } from "../store";
+import { setAccessToken, clearAuth } from "../store/authSlice";
+import { refreshRequest } from "../features/auth/api";
+
+const BASE_URL = "http://localhost:5000";
+
+let isRefreshing = false;
+
+export async function apiFetch(path: string, options: RequestInit = {}) {
+  const state = store.getState();
+  const token = state.auth.accessToken;
+
+  const res = await fetch(`${BASE_URL}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token && { Authorization: `Bearer ${token}` }),
+      ...options.headers,
+    },
+    credentials: "include",
+  });
+
+  if (res.status === 401 && !isRefreshing) {
+    try {
+      isRefreshing = true;
+
+      const refreshData = await refreshRequest();
+      store.dispatch(setAccessToken(refreshData.accessToken));
+
+      isRefreshing = false;
+
+      // retry original request once
+      return apiFetch(path, options);
+    } catch {
+      store.dispatch(clearAuth());
+      isRefreshing = false;
+      throw new Error("Unauthorized");
+    }
+  }
+
+  if (!res.ok) {
+    throw new Error("Request failed");
+  }
+
+  return res.json();
+}
+```
+
+## STEP 5: Register API Integration
+
+- Create register API function (`src/features/auth/api.ts`):
+
+```ts
+export async function registerRequest(email: string, password: string) {
+  return apiFetch("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
+```
+
+- Create validation schema for registration (`src/features/auth/registerSchema.ts`)
+
+```ts
+import * as yup from "yup";
+
+export const registerSchema = yup.object({
+  email: yup.string().required("Email is required").email("Invalid email"),
+
+  password: yup
+    .string()
+    .required("Password is required")
+    .min(6, "Minimum 6 characters"),
+
+  confirmPassword: yup
+    .string()
+    .required("Confirm password is required")
+    .oneOf([yup.ref("password")], "Passwords must match"),
+});
+```
+
+- Create register mutation hook (`src/features/auth/useRegister.ts`)
+
+```ts
+import { useMutation } from "@tanstack/react-query";
+import { useAppDispatch } from "../../store/hooks";
+import { setAccessToken } from "../../store/authSlice";
+import { registerRequest, loginRequest } from "./api";
+
+export function useRegister() {
+  const dispatch = useAppDispatch();
+
+  return useMutation({
+    mutationFn: async ({
+      email,
+      password,
+    }: {
+      email: string;
+      password: string;
+    }) => {
+      await registerRequest(email, password);
+
+      // auto-login after register
+      return loginRequest(email, password);
+    },
+
+    onSuccess: (data) => {
+      dispatch(setAccessToken(data.accessToken));
+    },
+  });
+}
+```
+
+- Create Register page (`src/pages/Register.tsx`)
+
+```tsx
+import { useForm } from "react-hook-form";
+import { yupResolver } from "@hookform/resolvers/yup";
+import { registerSchema } from "../features/auth/registerSchema";
+import { useRegister } from "../features/auth/useRegister";
+
+interface RegisterFormInputs {
+  email: string;
+  password: string;
+  confirmPassword: string;
+}
+
+export function Register() {
+  const { mutate, isPending, isError } = useRegister();
+
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<RegisterFormInputs>({
+    resolver: yupResolver(registerSchema),
+  });
+
+  function onSubmit(data: RegisterFormInputs) {
+    mutate({
+      email: data.email,
+      password: data.password,
+    });
+  }
+
+  return (
+    <div className="flex items-center justify-center min-h-screen bg-gray-100">
+      <form
+        onSubmit={handleSubmit(onSubmit)}
+        className="bg-white p-6 rounded-lg shadow-md w-80"
+      >
+        <h2 className="text-xl font-semibold mb-4 text-center">Register</h2>
+
+        <input
+          {...register("email")}
+          placeholder="Email"
+          className="w-full mb-1 px-3 py-2 border rounded"
+        />
+        {errors.email && (
+          <p className="text-red-500 text-sm mb-2">{errors.email.message}</p>
+        )}
+
+        <input
+          type="password"
+          {...register("password")}
+          placeholder="Password"
+          className="w-full mb-1 px-3 py-2 border rounded"
+        />
+        {errors.password && (
+          <p className="text-red-500 text-sm mb-2">{errors.password.message}</p>
+        )}
+
+        <input
+          type="password"
+          {...register("confirmPassword")}
+          placeholder="Confirm Password"
+          className="w-full mb-1 px-3 py-2 border rounded"
+        />
+        {errors.confirmPassword && (
+          <p className="text-red-500 text-sm mb-3">
+            {errors.confirmPassword.message}
+          </p>
+        )}
+
+        <button
+          type="submit"
+          disabled={isPending}
+          className="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700 disabled:opacity-50"
+        >
+          {isPending ? "Registering..." : "Register"}
+        </button>
+
+        {isError && (
+          <p className="text-red-500 mt-3 text-sm text-center">
+            Registration failed
+          </p>
+        )}
+      </form>
+    </div>
+  );
+}
+```
+
+<!-- Continue from last step of STEP 5 -->

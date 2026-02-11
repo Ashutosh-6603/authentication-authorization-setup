@@ -6,3 +6,9 @@ export async function loginRequest(email: string, password: string) {
     body: JSON.stringify({ email, password }),
   });
 }
+
+export async function refreshRequest() {
+  return apiFetch("/auth/refresh", {
+    method: "POST",
+  });
+}
