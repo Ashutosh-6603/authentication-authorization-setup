@@ -12,3 +12,10 @@ export async function refreshRequest() {
     method: "POST",
   });
 }
+
+export async function registerRequest(email: string, password: string) {
+  return apiFetch("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}

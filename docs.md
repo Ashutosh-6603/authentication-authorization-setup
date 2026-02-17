@@ -1887,5 +1887,3 @@ export function Register() {
   );
 }
 ```
-
-<!-- Continue from last step of STEP 5 -->
