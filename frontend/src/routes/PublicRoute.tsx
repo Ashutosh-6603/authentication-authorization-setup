@@ -1,12 +1,12 @@
 import type { ReactElement } from "react";
-import { useAppSelector } from "../store/hooks";
 import { Navigate } from "react-router-dom";
+import { useAppSelector } from "../store/hooks";
 
-interface ProtectedRouteProps {
+interface PublicRouteProps {
   children: ReactElement;
 }
 
-export function ProtectedRoute({ children }: ProtectedRouteProps) {
+export function PublicRoute({ children }: PublicRouteProps) {
   const { accessToken, isAuthInitialized } = useAppSelector(
     (state) => state.auth,
   );
@@ -15,8 +15,8 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
     return null;
   }
 
-  if (!accessToken) {
-    return <Navigate to="/login" replace />;
+  if (accessToken) {
+    return <Navigate to="/dashboard" replace />;
   }
 
   return children;

@@ -2,6 +2,8 @@ import { useForm } from "react-hook-form";
 import { useRegister } from "../features/auth/useRegister";
 import { yupResolver } from "@hookform/resolvers/yup";
 import { registerSchema } from "../features/auth/registerSchema";
+import { ApiError } from "../lib/api";
+import { Link, useNavigate } from "react-router-dom";
 
 interface RegisterFormInputs {
   email: string;
@@ -10,7 +12,8 @@ interface RegisterFormInputs {
 }
 
 export default function Register() {
-  const { mutate, isPending, isError } = useRegister();
+  const { mutate, isPending, isError, error } = useRegister();
+  const navigate = useNavigate();
 
   const {
     register,
@@ -24,8 +27,15 @@ export default function Register() {
     mutate({
       email: data.email,
       password: data.password,
+    }, {
+      onSuccess: () => {
+        navigate("/dashboard", { replace: true });
+      },
     });
   }
+
+  const errorMessage =
+    error instanceof ApiError ? error.message : "Registration failed";
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-gray-100">
@@ -75,10 +85,15 @@ export default function Register() {
         </button>
 
         {isError && (
-          <p className="text-red-500 mt-3 text-sm text-center">
-            Registration failed
-          </p>
+          <p className="text-red-500 mt-3 text-sm text-center">{errorMessage}</p>
         )}
+
+        <p className="mt-3 text-sm text-center text-gray-600">
+          Already have an account?{" "}
+          <Link className="text-blue-600 hover:underline" to="/login">
+            Login
+          </Link>
+        </p>
       </form>
     </div>
   );

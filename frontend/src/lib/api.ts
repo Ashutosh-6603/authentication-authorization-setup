@@ -1,46 +1,147 @@
-import { refreshRequest } from "../features/auth/api";
 import { store } from "../store";
 import { clearAuth, setAccessToken } from "../store/authSlice/authSlice";
 
-const BASE_URL = "http://localhost:5000";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:5000";
 
-let isRefreshing = false;
+interface ApiRequestOptions extends RequestInit {
+  withAuth?: boolean;
+  retryOnUnauthorized?: boolean;
+}
 
-export async function apiFetch(path: string, options: RequestInit = {}) {
-  const state = store.getState();
-  const token = state.auth.accessToken;
+interface ApiErrorPayload {
+  message?: string;
+}
 
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token && { Authorization: `Bearer ${token}` }),
-      ...options.headers,
-    },
-    credentials: "include",
-  });
+interface RefreshPayload {
+  accessToken?: string;
+}
 
-  if (res.status === 401 && !isRefreshing) {
-    try {
-      isRefreshing = true;
+export class ApiError extends Error {
+  public readonly status: number;
 
-      const refreshData = await refreshRequest();
-      store.dispatch(setAccessToken(refreshData.accessToken));
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
 
-      isRefreshing = false;
+let refreshPromise: Promise<string | null> | null = null;
 
-      // Retry the original request with the new token
-      return apiFetch(path, options);
-    } catch {
-      store.dispatch(clearAuth());
-      isRefreshing = false;
-      throw new Error("Unauthorized");
+function buildHeaders(headers?: HeadersInit): Headers {
+  const requestHeaders = new Headers(headers);
+
+  if (!requestHeaders.has("Content-Type")) {
+    requestHeaders.set("Content-Type", "application/json");
+  }
+
+  return requestHeaders;
+}
+
+async function parsePayload(response: Response): Promise<unknown> {
+  const contentType = response.headers.get("content-type");
+
+  if (!contentType?.includes("application/json")) {
+    return null;
+  }
+
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+async function request<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
+  const {
+    withAuth = true,
+    retryOnUnauthorized = withAuth,
+    headers,
+    ...requestInit
+  } = options;
+  const requestHeaders = buildHeaders(headers);
+
+  if (withAuth) {
+    const token = store.getState().auth.accessToken;
+
+    if (token) {
+      requestHeaders.set("Authorization", `Bearer ${token}`);
     }
   }
 
-  if (!res.ok) {
-    throw new Error("Request failed");
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...requestInit,
+    headers: requestHeaders,
+    credentials: "include",
+  });
+
+  if (response.status === 401 && retryOnUnauthorized) {
+    const refreshedToken = await refreshAccessToken();
+
+    if (refreshedToken) {
+      return request<T>(path, {
+        ...options,
+        retryOnUnauthorized: false,
+      });
+    }
   }
 
-  return res.json();
+  const payload = await parsePayload(response);
+
+  if (!response.ok) {
+    const errorMessage =
+      (payload as ApiErrorPayload | null)?.message ?? "Request failed";
+
+    throw new ApiError(response.status, errorMessage);
+  }
+
+  return payload as T;
+}
+
+async function performRefresh(): Promise<string | null> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      method: "POST",
+      headers: buildHeaders(),
+      credentials: "include",
+    });
+    const payload = (await parsePayload(response)) as RefreshPayload | null;
+
+    if (!response.ok || !payload?.accessToken) {
+      store.dispatch(clearAuth());
+      return null;
+    }
+
+    store.dispatch(setAccessToken(payload.accessToken));
+    return payload.accessToken;
+  } catch {
+    store.dispatch(clearAuth());
+    return null;
+  }
+}
+
+export async function refreshAccessToken(): Promise<string | null> {
+  if (!refreshPromise) {
+    refreshPromise = performRefresh().finally(() => {
+      refreshPromise = null;
+    });
+  }
+
+  return refreshPromise;
+}
+
+export function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  return request<T>(path, {
+    ...options,
+    withAuth: true,
+    retryOnUnauthorized: true,
+  });
+}
+
+export function authFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  return request<T>(path, {
+    ...options,
+    withAuth: false,
+    retryOnUnauthorized: false,
+  });
 }

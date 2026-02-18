@@ -2,6 +2,8 @@ import { useLogin } from "../features/auth/useLogin";
 import { useForm } from "react-hook-form";
 import { yupResolver } from "@hookform/resolvers/yup";
 import { loginSchema } from "../features/auth/loginSchema";
+import { ApiError } from "../lib/api";
+import { Link, useNavigate } from "react-router-dom";
 
 interface LoginFormInputs {
   email: string;
@@ -9,7 +11,8 @@ interface LoginFormInputs {
 }
 
 export function Login() {
-  const { mutate, isPending, isError } = useLogin();
+  const { mutate, isPending, isError, error } = useLogin();
+  const navigate = useNavigate();
 
   const {
     register,
@@ -20,8 +23,15 @@ export function Login() {
   });
 
   function onSubmit(data: LoginFormInputs) {
-    mutate(data);
+    mutate(data, {
+      onSuccess: () => {
+        navigate("/dashboard", { replace: true });
+      },
+    });
   }
+
+  const errorMessage =
+    error instanceof ApiError ? error.message : "Invalid credentials";
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-gray-100">
@@ -63,10 +73,15 @@ export function Login() {
         </button>
 
         {isError && (
-          <p className="text-red-500 mt-3 text-sm text-center">
-            Invalid credentials
-          </p>
+          <p className="text-red-500 mt-3 text-sm text-center">{errorMessage}</p>
         )}
+
+        <p className="mt-3 text-sm text-center text-gray-600">
+          Don&apos;t have an account?{" "}
+          <Link className="text-blue-600 hover:underline" to="/register">
+            Register
+          </Link>
+        </p>
       </form>
     </div>
   );

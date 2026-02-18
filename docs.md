@@ -8,8 +8,8 @@
 
 ```perl
 auth-system/
- â”œâ”€ backend/
- â””â”€ docker/
+ ├─ backend/
+ └─ docker/
 ```
 
 - Move into the `backend` folder and initialize:
@@ -1155,28 +1155,54 @@ app.delete("/users/:id", requireAuth, requirePermission("user:ban"), banUser);
 
 ## Frontend Integration
 
-## Step 1: Create React app with Vite
+This section is the canonical frontend implementation guide for the backend authentication and authorization APIs in this project.
+
+### Backend APIs used by frontend
+
+| Method | Endpoint         | Purpose                                            |
+| ------ | ---------------- | -------------------------------------------------- |
+| `POST` | `/auth/register` | Register a new user                                |
+| `POST` | `/auth/login`    | Login and get access token                         |
+| `POST` | `/auth/refresh`  | Refresh access token using HttpOnly refresh cookie |
+| `POST` | `/auth/logout`   | Revoke refresh token and logout                    |
+
+### Frontend goals
+
+- Keep authentication state predictable and centralized.
+- Keep API logic reusable and typed.
+- Support silent session restore on page refresh.
+- Protect private routes and redirect users correctly.
+- Provide clean login, register, and dashboard flows.
+
+## Step 1: Install Frontend Dependencies
+
+If you are setting this up from scratch, create the frontend app with Vite first:
 
 ```bash
-npm create vite@latest ./
+npm create vite@latest frontend -- --template react-ts
 ```
 
-- Install required dependencies:
+Install required dependencies:
 
 ```bash
-npm install @reduxjs/toolkit react-redux
+npm install react-router-dom @reduxjs/toolkit react-redux @tanstack/react-query react-hook-form yup @hookform/resolvers tailwindcss @tailwindcss/vite
 ```
 
-- Why:
-  - Official Redux solution
-  - Less boilerplate
-  - Immutable updates handled internally
+Why these packages:
 
-- Create Redux store (`frontend/src/store/index.ts`):
+- `react-router-dom`: client-side routing.
+- `@reduxjs/toolkit` + `react-redux`: auth state store.
+- `@tanstack/react-query`: mutation/query orchestration.
+- `react-hook-form` + `yup`: form state + validation.
+- `tailwindcss`: UI styling.
+
+## Step 2: Create Auth State with Redux Toolkit
+
+Create `frontend/src/store/index.ts`:
 
 ```ts
 import { configureStore } from "@reduxjs/toolkit";
-import authReducer from "./authSlice";
+import authReducer from "./authSlice/authSlice";
 
 export const store = configureStore({
   reducer: {
@@ -1188,22 +1214,19 @@ export type RootState = ReturnType<typeof store.getState>;
 export type AppDispatch = typeof store.dispatch;
 ```
 
-- Why:
-  - Single source of truth
-  - Typed store (important for TS)
-  - Scales cleanly
-
-- Auth slice (core state) (`frontend/src/store/authSlice.ts`):
+Create `frontend/src/store/authSlice/authSlice.ts`:
 
 ```ts
-import { createSlice, PayloadAction } from "@reduxjs/toolkit";
+import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
 
 interface AuthState {
   accessToken: string | null;
+  isAuthInitialized: boolean;
 }
 
 const initialState: AuthState = {
   accessToken: null,
+  isAuthInitialized: false,
 };
 
 const authSlice = createSlice({
@@ -1212,66 +1235,45 @@ const authSlice = createSlice({
   reducers: {
     setAccessToken(state, action: PayloadAction<string>) {
       state.accessToken = action.payload;
+      state.isAuthInitialized = true;
     },
     clearAuth(state) {
       state.accessToken = null;
+      state.isAuthInitialized = true;
+    },
+    setAuthInitialized(state) {
+      state.isAuthInitialized = true;
     },
   },
 });
 
-export const { setAccessToken, clearAuth } = authSlice.actions;
+export const { setAccessToken, clearAuth, setAuthInitialized } =
+  authSlice.actions;
 export default authSlice.reducer;
 ```
 
-- Why:
-  - Only access token stored
-  - No roles/permissions yet (derived later)
-  - Simple, predictable state
-
-- Provide the store in `frontend/src/main.tsx`:
-
-```tsx
-import React from "react";
-import ReactDOM from "react-dom/client";
-import { Provider } from "react-redux";
-import { store } from "./store";
-import App from "./App";
-
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <Provider store={store}>
-    <App />
-  </Provider>,
-);
-```
-
-- Why:
-  - Redux becomes globally accessible
-  - Required for hooks like `useSelector` and `useDispatch`
-
-- Typed Redux hooks (`frontend/src/store/hooks.ts`):
+Create typed hooks in `frontend/src/store/hooks.ts`:
 
 ```ts
-import { TypedUseSelectorHook, useDispatch, useSelector } from "react-redux";
-import type { RootState, AppDispatch } from "./index";
+import {
+  useDispatch,
+  useSelector,
+  type TypedUseSelectorHook,
+} from "react-redux";
+import type { AppDispatch, RootState } from ".";
 
 export const useAppDispatch = () => useDispatch<AppDispatch>();
 export const useAppSelector: TypedUseSelectorHook<RootState> = useSelector;
 ```
 
-- Why:
-  - Type-safe Redux usage
-  - Prevents `any` creep
-  - Industry standard
+Why `isAuthInitialized` exists:
 
-## STEP 2: Tanstack Query Setup + Auth-Aware API Layer
+- It prevents route flicker while silent refresh is running.
+- Routes can wait until auth bootstrap completes.
 
-- Install dependencies:
+## Step 3: Configure React Query and Providers
 
-```bash
-npm install @tanstack/react-query
-```
-
-- Create Query Client (`frontend/src/lib/queryClient.ts`):
+Create `frontend/src/lib/queryClient.ts`:
 
 ```ts
 import { QueryClient } from "@tanstack/react-query";
@@ -1286,264 +1288,261 @@ export const queryClient = new QueryClient({
 });
 ```
 
-- Why:
-  | Option | Reason |
-  | ----------------------------- | ------------------------------------- |
-  | `retry: 1` | Avoid infinite retries on 401 |
-  | `refetchOnWindowFocus: false` | Prevent surprise background refetches |
-
-- React Query is for server state orchestration, not uncontrolled refetching
-
-- Provide Query Client to app
-
-- Update `main.tsx`
+Update `frontend/src/main.tsx`:
 
 ```tsx
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import "./index.css";
+import App from "./App.tsx";
+import { Provider } from "react-redux";
+import { store } from "./store/index.ts";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { queryClient } from "./lib/queryClient";
+import { queryClient } from "./lib/queryClient.ts";
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <Provider store={store}>
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>
-  </Provider>,
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <Provider store={store}>
+      <QueryClientProvider client={queryClient}>
+        <App />
+      </QueryClientProvider>
+    </Provider>
+  </StrictMode>,
 );
 ```
 
-- Central API client (fetch-based)
-- Create `frontend/src/lib/api.ts`:
+## Step 4: Build a Typed API Layer with Refresh Handling
+
+Create `frontend/src/lib/api.ts`:
 
 ```ts
 import { store } from "../store";
+import { clearAuth, setAccessToken } from "../store/authSlice/authSlice";
 
-const BASE_URL = "http://localhost:5000";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:5000";
 
-export async function apiFetch(path: string, options: RequestInit = {}) {
-  const state = store.getState();
-  const token = state.auth.accessToken;
+interface ApiRequestOptions extends RequestInit {
+  withAuth?: boolean;
+  retryOnUnauthorized?: boolean;
+}
 
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token && { Authorization: `Bearer ${token}` }),
-      ...options.headers,
-    },
-    credentials: "include", // required for refresh cookie
-  });
+interface ApiErrorPayload {
+  message?: string;
+}
 
-  if (!res.ok) {
-    throw new Error("Request failed");
+interface RefreshPayload {
+  accessToken?: string;
+}
+
+export class ApiError extends Error {
+  public readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+let refreshPromise: Promise<string | null> | null = null;
+
+function buildHeaders(headers?: HeadersInit): Headers {
+  const requestHeaders = new Headers(headers);
+
+  if (!requestHeaders.has("Content-Type")) {
+    requestHeaders.set("Content-Type", "application/json");
   }
 
-  return res.json();
+  return requestHeaders;
 }
-```
 
-- Why this architecture:
-  - Why not call fetch directly in components?
-    - You duplicate headers
-    - You duplicate error handling
-    - Hard to attach tokens consistently
-    - This centralizes all auth behavior.
+async function parsePayload(response: Response): Promise<unknown> {
+  const contentType = response.headers.get("content-type");
 
-  - Why use store.getState() instead of passing token manually?
-    - React Query functions run outside components
-    - Avoids prop-drilling
-    - Keeps API layer framework-agnostic
+  if (!contentType?.includes("application/json")) {
+    return null;
+  }
 
-  - Why `credentials: "include"`?
-    - Refresh token is stored in HttpOnly cookie
-    - Without this, browser won’t send it
-    - Required for `/auth/refresh`
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
 
-  - Why Redux + React Query combination works
-    - Redux stores authentication state
-    - React Query manages server interaction lifecycle
+async function request<T>(
+  path: string,
+  options: ApiRequestOptions = {},
+): Promise<T> {
+  const {
+    withAuth = true,
+    retryOnUnauthorized = withAuth,
+    headers,
+    ...requestInit
+  } = options;
+  const requestHeaders = buildHeaders(headers);
 
-- Test Infrastructure
+  if (withAuth) {
+    const token = store.getState().auth.accessToken;
 
-- Example usage in a component
+    if (token) {
+      requestHeaders.set("Authorization", `Bearer ${token}`);
+    }
+  }
 
-```tsx
-import { useQuery } from "@tanstack/react-query";
-import { apiFetch } from "../lib/api";
-
-export function HealthCheck() {
-  const { data, isLoading } = useQuery({
-    queryKey: ["health"],
-    queryFn: () => apiFetch("/health"),
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...requestInit,
+    headers: requestHeaders,
+    credentials: "include",
   });
 
-  if (isLoading) return <p>Loading...</p>;
+  if (response.status === 401 && retryOnUnauthorized) {
+    const refreshedToken = await refreshAccessToken();
 
-  return <pre>{JSON.stringify(data)}</pre>;
+    if (refreshedToken) {
+      return request<T>(path, {
+        ...options,
+        retryOnUnauthorized: false,
+      });
+    }
+  }
+
+  const payload = await parsePayload(response);
+
+  if (!response.ok) {
+    const errorMessage =
+      (payload as ApiErrorPayload | null)?.message ?? "Request failed";
+
+    throw new ApiError(response.status, errorMessage);
+  }
+
+  return payload as T;
+}
+
+async function performRefresh(): Promise<string | null> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      method: "POST",
+      headers: buildHeaders(),
+      credentials: "include",
+    });
+    const payload = (await parsePayload(response)) as RefreshPayload | null;
+
+    if (!response.ok || !payload?.accessToken) {
+      store.dispatch(clearAuth());
+      return null;
+    }
+
+    store.dispatch(setAccessToken(payload.accessToken));
+    return payload.accessToken;
+  } catch {
+    store.dispatch(clearAuth());
+    return null;
+  }
+}
+
+export async function refreshAccessToken(): Promise<string | null> {
+  if (!refreshPromise) {
+    refreshPromise = performRefresh().finally(() => {
+      refreshPromise = null;
+    });
+  }
+
+  return refreshPromise;
+}
+
+export function apiFetch<T>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T> {
+  return request<T>(path, {
+    ...options,
+    withAuth: true,
+    retryOnUnauthorized: true,
+  });
+}
+
+export function authFetch<T>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T> {
+  return request<T>(path, {
+    ...options,
+    withAuth: false,
+    retryOnUnauthorized: false,
+  });
 }
 ```
 
-## STEP 3: Login Mutation + Access Token Storage (Redux + React Query)
+Why this API design is important:
 
-- Create the login api function (`src/features/auth/api.ts`)
+- Prevents duplicated fetch/auth logic across pages.
+- Handles `401` -> refresh -> retry once in one place.
+- Avoids recursive refresh loops.
+- Surfaces backend errors through `ApiError`.
+
+## Step 5: Add Auth API Functions
+
+Create `frontend/src/features/auth/api.ts`:
 
 ```ts
-import { apiFetch } from "../../lib/api";
+import { authFetch, refreshAccessToken } from "../../lib/api";
 
-export async function loginRequest(email: string, password: string) {
-  return apiFetch("/auth/login", {
+export interface AccessTokenResponse {
+  accessToken: string;
+}
+
+export interface RegisterResponse {
+  id: string;
+  email: string;
+  created_at: string;
+}
+
+export interface LogoutResponse {
+  message: string;
+}
+
+export function loginRequest(
+  email: string,
+  password: string,
+): Promise<AccessTokenResponse> {
+  return authFetch<AccessTokenResponse>("/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
 }
-```
 
-- Why separate files?:
-  - Keeps API layer modular
-  - Feature-based structure
-  - Scales when auth grows
+export function registerRequest(
+  email: string,
+  password: string,
+): Promise<RegisterResponse> {
+  return authFetch<RegisterResponse>("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
 
-- Create login mutation hook (`src/features/auth/useLogin.ts`)
+export async function refreshRequest(): Promise<AccessTokenResponse> {
+  const accessToken = await refreshAccessToken();
 
-```ts
-import { useMutation } from "@tanstack/react-query";
-import { useAppDispatch } from "../../store/hooks";
-import { setAccessToken } from "../../store/authSlice";
-import { loginRequest } from "./api";
+  if (!accessToken) {
+    throw new Error("Unable to refresh session");
+  }
 
-export function useLogin() {
-  const dispatch = useAppDispatch();
+  return { accessToken };
+}
 
-  return useMutation({
-    mutationFn: ({ email, password }: { email: string; password: string }) =>
-      loginRequest(email, password),
-
-    onSuccess: (data) => {
-      dispatch(setAccessToken(data.accessToken));
-    },
+export function logoutRequest(): Promise<LogoutResponse> {
+  return authFetch<LogoutResponse>("/auth/logout", {
+    method: "POST",
   });
 }
 ```
 
-- Install tailwind css
+## Step 6: Add Form Validation Schemas
 
-```bash
-npm install tailwindcss @tailwindcss/vite
-```
-
-- Update the `vite.config.ts` file to include the plugin:
-
-```ts
-import { defineConfig } from "vite";
-import tailwindcss from "@tailwindcss/vite";
-
-export default defineConfig({
-  plugins: [tailwindcss()],
-});
-```
-
-- import tailwind to the css file (`frontend/src/index.css`):
-
-```css
-@import "tailwindcss";
-```
-
-- Create a basic login page (`src/pages/Login.tsx`):
-
-```tsx
-import { useState } from "react";
-import { useLogin } from "../features/auth/useLogin";
-
-export function Login() {
-  const { mutate, isPending, isError } = useLogin();
-
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-
-  function handleSubmit(e: ChangeEvent<HTMLFormElement>) {
-    e.preventDefault();
-    mutate({ email, password });
-  }
-
-  return (
-    <div className="flex items-center justify-center min-h-screen bg-gray-100">
-      <form
-        onSubmit={handleSubmit}
-        className="bg-white p-6 rounded-lg shadow-md w-80"
-      >
-        <h2 className="text-xl font-semibold mb-4 text-center">Login</h2>
-
-        <input
-          className="w-full mb-3 px-3 py-2 border rounded"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-
-        <input
-          className="w-full mb-4 px-3 py-2 border rounded"
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
-
-        <button
-          className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700"
-          disabled={isPending}
-        >
-          {isPending ? "Logging in..." : "Login"}
-        </button>
-
-        {isError && <p className="text-red-500 mt-2 text-sm">Login failed</p>}
-      </form>
-    </div>
-  );
-}
-```
-
-- Why store only accessToken in Redux?
-  - Because:
-    - It is short-lived
-    - It is needed globally
-    - It changes over time
-  - We do not store
-    - Refresh token (cookie)
-    - User data yet
-    - Roles separately
-
-- Protected Route (Redux-based)
-- Create a proteccted page (`src/routes/ProtectedRoute.tsx`)
-
-```tsx
-import { Navigate } from "react-router-dom";
-import { useAppSelector } from "../store/hooks";
-
-export function ProtectedRoute({ children }: { children: JSX.Element }) {
-  const token = useAppSelector((state) => state.auth.accessToken);
-
-  if (!token) {
-    return <Navigate to="/login" replace />;
-  }
-
-  return children;
-}
-```
-
-- Login Page with React Hook Form
-
-- Install React Hook Form
-
-```bash
-npm install react-hook-form
-```
-
-- Install yup for validation
-
-```bash
-npm install yup @hookform/resolvers
-```
-
-- Create Login Validation Schema (`src/features/auth/loginSchema.ts`)
+Create `frontend/src/features/auth/loginSchema.ts`:
 
 ```ts
 import * as yup from "yup";
@@ -1561,192 +1560,7 @@ export const loginSchema = yup.object({
 });
 ```
 
-- Update the login page to use React Hook Form and yup (`src/pages/Login.tsx`):
-
-```tsx
-import { useForm } from "react-hook-form";
-import { yupResolver } from "@hookform/resolvers/yup";
-import { useLogin } from "../features/auth/useLogin";
-import { loginSchema } from "../features/auth/loginSchema";
-
-interface LoginFormInputs {
-  email: string;
-  password: string;
-}
-
-export function Login() {
-  const { mutate, isPending, isError } = useLogin();
-
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<LoginFormInputs>({
-    resolver: yupResolver(loginSchema),
-  });
-
-  function onSubmit(data: LoginFormInputs) {
-    mutate(data);
-  }
-
-  return (
-    <div className="flex items-center justify-center min-h-screen bg-gray-100">
-      <form
-        onSubmit={handleSubmit(onSubmit)}
-        className="bg-white p-6 rounded-lg shadow-md w-80"
-      >
-        <h2 className="text-xl font-semibold mb-4 text-center">Login</h2>
-
-        {/* Email */}
-        <input
-          {...register("email")}
-          className="w-full mb-1 px-3 py-2 border rounded"
-          placeholder="Email"
-        />
-        {errors.email && (
-          <p className="text-red-500 text-sm mb-2">{errors.email.message}</p>
-        )}
-
-        {/* Password */}
-        <input
-          type="password"
-          {...register("password")}
-          className="w-full mb-1 px-3 py-2 border rounded"
-          placeholder="Password"
-        />
-        {errors.password && (
-          <p className="text-red-500 text-sm mb-3">{errors.password.message}</p>
-        )}
-
-        <button
-          type="submit"
-          disabled={isPending}
-          className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-50"
-        >
-          {isPending ? "Logging in..." : "Login"}
-        </button>
-
-        {isError && (
-          <p className="text-red-500 mt-3 text-sm text-center">
-            Invalid credentials
-          </p>
-        )}
-      </form>
-    </div>
-  );
-}
-```
-
-## STEP 4: Token Lifecycle Management (Silent Refresh + 401 Handling)
-
-- Create refresh API function (`src/features/auth/api.ts`):
-
-```ts
-import { apiFetch } from "../../lib/api";
-
-export async function refreshRequest() {
-  return apiFetch("/auth/refresh", {
-    method: "POST",
-  });
-}
-```
-
-- Add silent refresh on app startup (`src/App.tsx`):
-
-```tsx
-import { useEffect } from "react";
-import { useAppDispatch } from "./store/hooks";
-import { setAccessToken, clearAuth } from "./store/authSlice";
-import { refreshRequest } from "./features/auth/api";
-
-function App() {
-  const dispatch = useAppDispatch();
-
-  useEffect(() => {
-    async function tryRefresh() {
-      try {
-        const data = await refreshRequest();
-        dispatch(setAccessToken(data.accessToken));
-      } catch {
-        dispatch(clearAuth());
-      }
-    }
-
-    tryRefresh();
-  }, [dispatch]);
-
-  return <>{/* your routes here */}</>;
-}
-
-export default App;
-```
-
-- Upgrade apiFetch to auto-refresh on 401
-- Update `src/lib/api.ts`:
-
-```ts
-import { store } from "../store";
-import { setAccessToken, clearAuth } from "../store/authSlice";
-import { refreshRequest } from "../features/auth/api";
-
-const BASE_URL = "http://localhost:5000";
-
-let isRefreshing = false;
-
-export async function apiFetch(path: string, options: RequestInit = {}) {
-  const state = store.getState();
-  const token = state.auth.accessToken;
-
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token && { Authorization: `Bearer ${token}` }),
-      ...options.headers,
-    },
-    credentials: "include",
-  });
-
-  if (res.status === 401 && !isRefreshing) {
-    try {
-      isRefreshing = true;
-
-      const refreshData = await refreshRequest();
-      store.dispatch(setAccessToken(refreshData.accessToken));
-
-      isRefreshing = false;
-
-      // retry original request once
-      return apiFetch(path, options);
-    } catch {
-      store.dispatch(clearAuth());
-      isRefreshing = false;
-      throw new Error("Unauthorized");
-    }
-  }
-
-  if (!res.ok) {
-    throw new Error("Request failed");
-  }
-
-  return res.json();
-}
-```
-
-## STEP 5: Register API Integration
-
-- Create register API function (`src/features/auth/api.ts`):
-
-```ts
-export async function registerRequest(email: string, password: string) {
-  return apiFetch("/auth/register", {
-    method: "POST",
-    body: JSON.stringify({ email, password }),
-  });
-}
-```
-
-- Create validation schema for registration (`src/features/auth/registerSchema.ts`)
+Create `frontend/src/features/auth/registerSchema.ts`:
 
 ```ts
 import * as yup from "yup";
@@ -1761,18 +1575,41 @@ export const registerSchema = yup.object({
 
   confirmPassword: yup
     .string()
-    .required("Confirm password is required")
+    .required("Password is required")
     .oneOf([yup.ref("password")], "Passwords must match"),
 });
 ```
 
-- Create register mutation hook (`src/features/auth/useRegister.ts`)
+## Step 7: Add Auth Mutation Hooks
+
+Create `frontend/src/features/auth/useLogin.ts`:
 
 ```ts
 import { useMutation } from "@tanstack/react-query";
 import { useAppDispatch } from "../../store/hooks";
-import { setAccessToken } from "../../store/authSlice";
-import { registerRequest, loginRequest } from "./api";
+import { loginRequest } from "./api";
+import { setAccessToken } from "../../store/authSlice/authSlice";
+
+export function useLogin() {
+  const dispatch = useAppDispatch();
+
+  return useMutation({
+    mutationFn: ({ email, password }: { email: string; password: string }) =>
+      loginRequest(email, password),
+    onSuccess: (data) => {
+      dispatch(setAccessToken(data.accessToken));
+    },
+  });
+}
+```
+
+Create `frontend/src/features/auth/useRegister.ts`:
+
+```ts
+import { useMutation } from "@tanstack/react-query";
+import { useAppDispatch } from "../../store/hooks";
+import { loginRequest, registerRequest } from "./api";
+import { setAccessToken } from "../../store/authSlice/authSlice";
 
 export function useRegister() {
   const dispatch = useAppDispatch();
@@ -1787,7 +1624,6 @@ export function useRegister() {
     }) => {
       await registerRequest(email, password);
 
-      // auto-login after register
       return loginRequest(email, password);
     },
 
@@ -1798,13 +1634,188 @@ export function useRegister() {
 }
 ```
 
-- Create Register page (`src/pages/Register.tsx`)
+Create `frontend/src/features/auth/useLogout.ts`:
+
+```ts
+import { useMutation } from "@tanstack/react-query";
+import { clearAuth } from "../../store/authSlice/authSlice";
+import { useAppDispatch } from "../../store/hooks";
+import { logoutRequest } from "./api";
+
+export function useLogout() {
+  const dispatch = useAppDispatch();
+
+  return useMutation({
+    mutationFn: logoutRequest,
+    onSuccess: () => {
+      dispatch(clearAuth());
+    },
+  });
+}
+```
+
+## Step 8: Add Route Guards
+
+Create `frontend/src/routes/ProtectedRoute.tsx`:
+
+```tsx
+import type { ReactElement } from "react";
+import { useAppSelector } from "../store/hooks";
+import { Navigate } from "react-router-dom";
+
+interface ProtectedRouteProps {
+  children: ReactElement;
+}
+
+export function ProtectedRoute({ children }: ProtectedRouteProps) {
+  const { accessToken, isAuthInitialized } = useAppSelector(
+    (state) => state.auth,
+  );
+
+  if (!isAuthInitialized) {
+    return null;
+  }
+
+  if (!accessToken) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return children;
+}
+```
+
+Create `frontend/src/routes/PublicRoute.tsx`:
+
+```tsx
+import type { ReactElement } from "react";
+import { Navigate } from "react-router-dom";
+import { useAppSelector } from "../store/hooks";
+
+interface PublicRouteProps {
+  children: ReactElement;
+}
+
+export function PublicRoute({ children }: PublicRouteProps) {
+  const { accessToken, isAuthInitialized } = useAppSelector(
+    (state) => state.auth,
+  );
+
+  if (!isAuthInitialized) {
+    return null;
+  }
+
+  if (accessToken) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return children;
+}
+```
+
+## Step 9: Build Login and Register Pages
+
+Create `frontend/src/pages/Login.tsx`:
+
+```tsx
+import { useLogin } from "../features/auth/useLogin";
+import { useForm } from "react-hook-form";
+import { yupResolver } from "@hookform/resolvers/yup";
+import { loginSchema } from "../features/auth/loginSchema";
+import { ApiError } from "../lib/api";
+import { Link, useNavigate } from "react-router-dom";
+
+interface LoginFormInputs {
+  email: string;
+  password: string;
+}
+
+export function Login() {
+  const { mutate, isPending, isError, error } = useLogin();
+  const navigate = useNavigate();
+
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<LoginFormInputs>({
+    resolver: yupResolver(loginSchema),
+  });
+
+  function onSubmit(data: LoginFormInputs) {
+    mutate(data, {
+      onSuccess: () => {
+        navigate("/dashboard", { replace: true });
+      },
+    });
+  }
+
+  const errorMessage =
+    error instanceof ApiError ? error.message : "Invalid credentials";
+
+  return (
+    <div className="flex items-center justify-center min-h-screen bg-gray-100">
+      <form
+        onSubmit={handleSubmit(onSubmit)}
+        className="bg-white p-6 rounded-lg shadow-md w-80"
+      >
+        <h2 className="text-xl font-semibold mb-4 text-center">Login</h2>
+
+        <input
+          {...register("email")}
+          placeholder="Email"
+          className="w-full mb-1 px-3 py-2 border rounded"
+        />
+
+        {errors.email && (
+          <p className="text-red-500 text-sm mb-2">{errors.email.message}</p>
+        )}
+
+        <input
+          type="password"
+          {...register("password")}
+          placeholder="Password"
+          className="w-full mb-1 px-3 py-2 border rounded"
+        />
+
+        {errors.password && (
+          <p className="text-red-500 text-sm mb-3">{errors.password.message}</p>
+        )}
+
+        <button
+          type="submit"
+          disabled={isPending}
+          className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+        >
+          {isPending ? "Logging in..." : "Login"}
+        </button>
+
+        {isError && (
+          <p className="text-red-500 mt-3 text-sm text-center">
+            {errorMessage}
+          </p>
+        )}
+
+        <p className="mt-3 text-sm text-center text-gray-600">
+          Don&apos;t have an account?{" "}
+          <Link className="text-blue-600 hover:underline" to="/register">
+            Register
+          </Link>
+        </p>
+      </form>
+    </div>
+  );
+}
+```
+
+Create `frontend/src/pages/Register.tsx`:
 
 ```tsx
 import { useForm } from "react-hook-form";
+import { useRegister } from "../features/auth/useRegister";
 import { yupResolver } from "@hookform/resolvers/yup";
 import { registerSchema } from "../features/auth/registerSchema";
-import { useRegister } from "../features/auth/useRegister";
+import { ApiError } from "../lib/api";
+import { Link, useNavigate } from "react-router-dom";
 
 interface RegisterFormInputs {
   email: string;
@@ -1812,8 +1823,9 @@ interface RegisterFormInputs {
   confirmPassword: string;
 }
 
-export function Register() {
-  const { mutate, isPending, isError } = useRegister();
+export default function Register() {
+  const { mutate, isPending, isError, error } = useRegister();
+  const navigate = useNavigate();
 
   const {
     register,
@@ -1824,11 +1836,21 @@ export function Register() {
   });
 
   function onSubmit(data: RegisterFormInputs) {
-    mutate({
-      email: data.email,
-      password: data.password,
-    });
+    mutate(
+      {
+        email: data.email,
+        password: data.password,
+      },
+      {
+        onSuccess: () => {
+          navigate("/dashboard", { replace: true });
+        },
+      },
+    );
   }
+
+  const errorMessage =
+    error instanceof ApiError ? error.message : "Registration failed";
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-gray-100">
@@ -1879,11 +1901,210 @@ export function Register() {
 
         {isError && (
           <p className="text-red-500 mt-3 text-sm text-center">
-            Registration failed
+            {errorMessage}
           </p>
         )}
+
+        <p className="mt-3 text-sm text-center text-gray-600">
+          Already have an account?{" "}
+          <Link className="text-blue-600 hover:underline" to="/login">
+            Login
+          </Link>
+        </p>
       </form>
     </div>
   );
 }
 ```
+
+## Step 10: Add Dashboard Page with Logout Button
+
+Create `frontend/src/pages/Dashboard.tsx`:
+
+```tsx
+import { useNavigate } from "react-router-dom";
+import { useLogout } from "../features/auth/useLogout";
+import { ApiError } from "../lib/api";
+
+export default function Dashboard() {
+  const navigate = useNavigate();
+  const { mutate, isPending, isError, error } = useLogout();
+
+  function handleLogout() {
+    mutate(undefined, {
+      onSuccess: () => {
+        navigate("/login", { replace: true });
+      },
+    });
+  }
+
+  const errorMessage =
+    error instanceof ApiError ? error.message : "Unable to log out";
+
+  return (
+    <div className="min-h-screen bg-gray-100 p-8">
+      <div className="mx-auto max-w-5xl rounded-lg border border-dashed border-gray-300 bg-white p-8">
+        <div className="flex items-center justify-between gap-4">
+          <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
+          <button
+            type="button"
+            className="rounded bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+            onClick={handleLogout}
+            disabled={isPending}
+          >
+            {isPending ? "Logging out..." : "Logout"}
+          </button>
+        </div>
+
+        {isError && <p className="mt-4 text-sm text-red-600">{errorMessage}</p>}
+      </div>
+    </div>
+  );
+}
+```
+
+## Step 11: Configure Routing and Auth Bootstrap
+
+Update `frontend/src/App.tsx`:
+
+```tsx
+import { useEffect } from "react";
+import { Login } from "./pages/Login";
+import { useAppDispatch } from "./store/hooks";
+import { refreshRequest } from "./features/auth/api";
+import {
+  clearAuth,
+  setAccessToken,
+  setAuthInitialized,
+} from "./store/authSlice/authSlice";
+import Register from "./pages/Register";
+import {
+  BrowserRouter as Router,
+  Navigate,
+  Route,
+  Routes,
+} from "react-router-dom";
+import Dashboard from "./pages/Dashboard";
+import { ProtectedRoute } from "./routes/ProtectedRoute";
+import { PublicRoute } from "./routes/PublicRoute";
+
+function App() {
+  const dispatch = useAppDispatch();
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function initializeAuth() {
+      try {
+        const data = await refreshRequest();
+
+        if (isMounted) {
+          dispatch(setAccessToken(data.accessToken));
+        }
+      } catch {
+        if (isMounted) {
+          dispatch(clearAuth());
+        }
+      } finally {
+        if (isMounted) {
+          dispatch(setAuthInitialized());
+        }
+      }
+    }
+
+    initializeAuth();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [dispatch]);
+
+  return (
+    <Router>
+      <Routes>
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
+        <Route
+          path="/login"
+          element={
+            <PublicRoute>
+              <Login />
+            </PublicRoute>
+          }
+        />
+
+        <Route
+          path="/register"
+          element={
+            <PublicRoute>
+              <Register />
+            </PublicRoute>
+          }
+        />
+
+        <Route
+          path="/dashboard"
+          element={
+            <ProtectedRoute>
+              <Dashboard />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      </Routes>
+    </Router>
+  );
+}
+
+export default App;
+```
+
+## Step 12: Environment Configuration
+
+Create `frontend/.env`:
+
+```env
+VITE_API_BASE_URL=http://localhost:5000
+```
+
+Why this is needed:
+
+- Keeps API base URL configurable.
+- Avoids hardcoding environment-specific backend URLs.
+
+## Step 13: End-to-End Flow (How it works)
+
+1. User opens app.
+2. `App.tsx` attempts silent refresh via `/auth/refresh`.
+3. If refresh succeeds, user is treated as authenticated.
+4. Public pages (`/login`, `/register`) redirect authenticated users to `/dashboard`.
+5. Protected pages (`/dashboard`) redirect unauthenticated users to `/login`.
+6. Login/Register success stores access token in Redux.
+7. Protected API requests send `Authorization: Bearer <token>` automatically.
+8. On token expiry, API layer tries `/auth/refresh` and retries once.
+9. Logout calls `/auth/logout`, clears auth state, and redirects to `/login`.
+
+## Step 14: Validation Commands
+
+Run these after implementation:
+
+```bash
+cd frontend
+npm run lint
+npx tsc -p tsconfig.app.json --noEmit
+npm run dev
+```
+
+## Step 15: Implementation Checklist
+
+- [ ] Auth slice created with `accessToken` and `isAuthInitialized`.
+- [ ] API client handles refresh and retry safely.
+- [ ] Auth APIs wired: login, register, refresh, logout.
+- [ ] Login/Register forms validate with Yup.
+- [ ] Public and protected routes enforce auth boundaries.
+- [ ] Dashboard exists and contains working logout button.
+- [ ] Startup refresh flow works after hard refresh.
+- [ ] Lint and typecheck pass.
+
+This completes frontend integration of the backend auth flow in a clean, scalable way.
