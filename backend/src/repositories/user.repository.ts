@@ -12,6 +12,14 @@ export const userRepository = {
     return result.rows[0] ?? null;
   },
 
+  async findById(userId: string): Promise<User | null> {
+    const result = await pool.query<User>(`SELECT * FROM users WHERE id = $1`, [
+      userId,
+    ]);
+
+    return result.rows[0] ?? null;
+  },
+
   async create(email: string, passwordHash: string): Promise<User> {
     const result = await pool.query<User>(
       `
@@ -49,13 +57,17 @@ export const userRepository = {
     );
   },
 
-  async findRefreshToken(token: string): Promise<RefreshToken | null> {
+  async findRefreshToken(tokenHash: string): Promise<RefreshToken | null> {
     const result = await pool.query<RefreshToken>(
       `
-        SELECT * FROM refresh_tokens
-        WHERE token = $1 AND revoked = false
+        SELECT * 
+        FROM refresh_tokens
+        WHERE token_hash = $1 
+          AND revoked = false 
+          AND expires_at > NOW() 
+        LIMIT 1
       `,
-      [token],
+      [tokenHash],
     );
 
     return result.rows[0] ?? null;

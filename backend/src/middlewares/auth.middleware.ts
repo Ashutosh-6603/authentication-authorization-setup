@@ -23,9 +23,10 @@ export function requireAuth(
     const payload = verifyAccessToken(token);
 
     req.userId = payload.userId;
-    req.roles = payload.roles;
+    req.roles = payload.roles ?? [];
+    req.permissions = payload.permissions ?? [];
 
-    next();
+    return next();
   } catch {
     return res.status(401).json({ message: "Invalid Token" });
   }
