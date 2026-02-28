@@ -1,4 +1,4 @@
-﻿# Steps
+# Steps
 
 ## Backend Integration
 
@@ -2108,3 +2108,4 @@ npm run dev
 - [ ] Lint and typecheck pass.
 
 This completes frontend integration of the backend auth flow in a clean, scalable way.
+Implemented all except the revisions.
